@@ -1,0 +1,78 @@
+name: Release
+
+# Push a tag like v0.1.0 to build and publish Buddy.dmg and Buddy.zip.
+# Signing and notarization run only when these repository secrets exist:
+#   MACOS_CERTIFICATE_P12 (base64 of a Developer ID Application .p12), MACOS_CERTIFICATE_PASSWORD,
+#   MACOS_SIGN_IDENTITY ("Developer ID Application: Name (TEAMID)"),
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (app-specific password).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: swift test
+
+      - name: Import Developer ID certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Build app
+        env:
+          SIGN_IDENTITY: ${{ env.HAS_SIGNING == 'true' && secrets.MACOS_SIGN_IDENTITY || '-' }}
+        run: VERSION="${GITHUB_REF_NAME#v}" BUILD_NUMBER="${{ github.run_number }}" scripts/build-app.sh
+
+      - name: Notarize
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent build/Buddy.app build/notarize.zip
+          xcrun notarytool submit build/notarize.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple build/Buddy.app
+          rm build/notarize.zip
+
+      - name: Package
+        run: |
+          ditto -c -k --keepParent build/Buddy.app build/Buddy.zip
+          mkdir -p build/dmg
+          cp -R build/Buddy.app build/dmg/
+          ln -s /Applications build/dmg/Applications
+          hdiutil create -volname Buddy -srcfolder build/dmg -ov -format UDZO build/Buddy.dmg
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Ladda ner Buddy.dmg, dra Buddy till Program och starta. Se README för första start."
+          if [ "$HAS_SIGNING" != "true" ]; then
+            NOTES="$NOTES Den här versionen är inte notariserad av Apple: första gången öppnar du den via Systeminställningar → Integritet och säkerhet → Öppna ändå."
+          fi
+          gh release create "$GITHUB_REF_NAME" build/Buddy.dmg build/Buddy.zip \
+            --title "Buddy $GITHUB_REF_NAME" --notes "$NOTES"

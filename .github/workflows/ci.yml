@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Build app bundle
+        run: BUILD_NUMBER="${{ github.run_number }}" scripts/build-app.sh
+
+      - name: Package
+        run: ditto -c -k --keepParent build/Buddy.app build/Buddy.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Buddy
+          path: build/Buddy.zip
+          retention-days: 14
