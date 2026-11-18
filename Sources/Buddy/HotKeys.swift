@@ -24,7 +24,8 @@ final class HotKeyCenter {
         HotKeyCenter.installHandler()
     }
 
-    func register(key: Key, action: @escaping () -> Void) {
+    @discardableResult
+    func register(key: Key, action: @escaping () -> Void) -> Bool {
         let id = UInt32(HotKeyCenter.actions.count + 1)
         HotKeyCenter.actions[id] = action
         let hotKeyID = EventHotKeyID(signature: OSType(0x4255_4459), id: id) // "BUDY"
@@ -33,9 +34,10 @@ final class HotKeyCenter {
         let status = RegisterEventHotKey(key.code, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
         if status == noErr, let ref {
             refs.append(ref)
-        } else {
-            NSLog("Buddy: kunde inte registrera kortkommando (\(status))")
+            return true
         }
+        NSLog("Buddy: kunde inte registrera kortkommando (\(status))")
+        return false
     }
 
     deinit {

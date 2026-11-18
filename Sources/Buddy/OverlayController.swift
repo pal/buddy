@@ -36,6 +36,47 @@ final class OverlayController {
             let target = self
             Task { @MainActor in target?.rebuild() }
         }
+        if EventLog.shared.isEnabled {
+            avatar.$mode
+                .removeDuplicates()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] mode in
+                    self?.recordState(mode: mode)
+                }
+                .store(in: &cancellables)
+        }
+    }
+
+    /// Panel geometry and visibility, for the end-to-end tests.
+    func panelDescriptions() -> [[String: Any]] {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return panels.map { panel in
+            let frame = panel.frame
+            // Core Graphics window coordinates have their origin at the top left of the main screen.
+            let cgFrame: [String: Double] = [
+                "x": Double(frame.minX),
+                "y": Double(primaryHeight - frame.maxY),
+                "w": Double(frame.width),
+                "h": Double(frame.height),
+            ]
+            return [
+                "frame": EventLog.frame(frame),
+                "cgFrame": cgFrame,
+                "screen": EventLog.frame(panel.screen?.frame ?? .zero),
+                "windowNumber": panel.windowNumber,
+                "level": panel.level.rawValue,
+                "joinsAllSpaces": panel.collectionBehavior.contains(.canJoinAllSpaces),
+                "fullScreenAuxiliary": panel.collectionBehavior.contains(.fullScreenAuxiliary),
+                "ignoresMouse": panel.ignoresMouseEvents,
+                "isVisible": panel.isVisible,
+                "onActiveSpace": panel.isOnActiveSpace,
+                "occlusionVisible": panel.occlusionState.contains(.visible),
+            ]
+        }
+    }
+
+    private func recordState(mode: AvatarState.Mode) {
+        EventLog.shared.record("overlayState", ["mode": "\(mode)", "panels": panelDescriptions()])
     }
 
     private var currentSignature: String {
@@ -55,6 +96,7 @@ final class OverlayController {
             panel.orderOut(nil)
         }
         panels = targetScreens().map(makePanel)
+        EventLog.shared.record("overlayPanels", ["panels": panelDescriptions(), "corner": settings.corner.rawValue])
     }
 
     private func targetScreens() -> [NSScreen] {

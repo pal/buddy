@@ -16,6 +16,11 @@ final class StatusBarController: NSObject {
         self.item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
         refresh()
+        EventLog.shared.record("statusItem", [
+            "visible": item.isVisible,
+            "hasIcon": item.button?.image != nil,
+            "menuItems": item.menu?.items.map(\.title) ?? [],
+        ])
         model.objectWillChange
             .merge(with: model.store.objectWillChange)
             .receive(on: DispatchQueue.main)

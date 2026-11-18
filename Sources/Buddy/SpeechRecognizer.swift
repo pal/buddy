@@ -42,6 +42,19 @@ final class AudioTapBox: @unchecked Sendable {
     }
 }
 
+/// Where transcripts come from: the microphone, or a test inbox in the end-to-end tests.
+@MainActor
+protocol SpeechInput: AnyObject {
+    var onTranscript: ((Int, String) -> Void)? { get set }
+    var onLog: ((String) -> Void)? { get set }
+    var isRunning: Bool { get }
+    var level: Float { get }
+    func start(locale: String, contextualStrings: [String], preferOnDevice: Bool)
+    func stop()
+    func restartSegment()
+    func setVocabulary(_ strings: [String])
+}
+
 /// Continuous speech recognition with Apple's Speech framework.
 ///
 /// Each recognition task is a "segment" with an increasing id. Tasks are restarted when they
@@ -95,6 +108,27 @@ final class SpeechRecognizer {
         }
     }
 
+    /// Current permission state, for diagnostics.
+    nonisolated static func permissionSummary() -> [String: String] {
+        let mic: String
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: mic = "authorized"
+        case .denied: mic = "denied"
+        case .restricted: mic = "restricted"
+        case .notDetermined: mic = "notDetermined"
+        @unknown default: mic = "unknown"
+        }
+        let speech: String
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized: speech = "authorized"
+        case .denied: speech = "denied"
+        case .restricted: speech = "restricted"
+        case .notDetermined: speech = "notDetermined"
+        @unknown default: speech = "unknown"
+        }
+        return ["microphone": mic, "speech": speech]
+    }
+
     nonisolated static func requestMicrophonePermission() async -> Bool {
         await withCheckedContinuation { continuation in
             AVCaptureDevice.requestAccess(for: .audio) { granted in
@@ -113,10 +147,12 @@ final class SpeechRecognizer {
 
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)) else {
             onLog?("Taligenkänning stöds inte för språket \(locale)")
+            EventLog.shared.record("inputError", ["message": "unsupported locale \(locale)"])
             return
         }
         guard recognizer.isAvailable else {
             onLog?("Taligenkänningen är inte tillgänglig just nu. Kontrollera nätverk och att Siri/diktering är på.")
+            EventLog.shared.record("inputError", ["message": "recognizer not available"])
             return
         }
         self.recognizer = recognizer
@@ -125,12 +161,19 @@ final class SpeechRecognizer {
             try startEngine()
         } catch {
             onLog?("Kunde inte starta mikrofonen: \(error.localizedDescription)")
+            EventLog.shared.record("inputError", ["message": "microphone: \(error.localizedDescription)"])
             return
         }
         isRunning = true
         failures = 0
         startTask()
         startWatchdog()
+        EventLog.shared.record("inputStarted", [
+            "source": "microphone",
+            "locale": locale,
+            "onDevice": isOnDevice,
+            "supportsOnDevice": recognizer.supportsOnDeviceRecognition,
+        ])
     }
 
     func stop() {
@@ -141,6 +184,7 @@ final class SpeechRecognizer {
         endTask()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        EventLog.shared.record("inputStopped", ["source": "microphone"])
     }
 
     /// Phrases that bias recognition. Used from the next recognition task.
@@ -244,6 +288,9 @@ final class SpeechRecognizer {
         // The task is over: start the next one. "No speech detected" (1110) is routine.
         endTask()
         var delay: Double = 0.05
+        if let error {
+            EventLog.shared.record("recognitionError", ["message": error, "code": code ?? 0])
+        }
         if let error, code != 1110, code != 216, code != 301 {
             failures += 1
             delay = min(8, 0.5 * pow(2, Double(min(failures, 4))))
@@ -275,3 +322,4 @@ final class SpeechRecognizer {
         }
     }
 }
+extension SpeechRecognizer: SpeechInput {}

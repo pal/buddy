@@ -19,11 +19,22 @@ En liten AI-robot som sitter i hörnet av skärmen när du presenterar. Buddy ly
 
 ## Installera
 
-1. Ladda ner `Buddy.dmg` från [Releases](../../releases) och dra Buddy till Program.
-2. Starta Buddy. En ikon dyker upp i menyraden (ingen ikon i Dock).
-3. Tillåt mikrofon och taligenkänning när macOS frågar.
+**Från källkod (rekommenderas just nu):** kräver Xcode eller Command Line Tools.
 
-Om versionen inte är notariserad av Apple stoppar macOS den första gången. Gå då till Systeminställningar → Integritet och säkerhet och klicka på Öppna ändå.
+```sh
+git clone https://github.com/pal/buddy.git && cd buddy
+make install   # bygger, lägger Buddy i /Applications och startar
+```
+
+En app du byggt själv har ingen karantänflagga, så macOS öppnar den utan varning.
+
+**Nedladdad app:** ladda ner `Buddy.dmg` från [Releases](../../releases). Är versionen signerad och notariserad med ett Developer ID öppnas den direkt. Annars stoppar macOS den ("Apple could not verify …"). Öppna den då via Systeminställningar → Integritet och säkerhet → Öppna ändå, eller ta bort karantänflaggan i Terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Buddy.app
+```
+
+Vid första start: tillåt mikrofon och taligenkänning när macOS frågar. Buddy syns som en ikon i menyraden (ingen ikon i Dock).
 
 ## Kom igång
 
@@ -98,12 +109,23 @@ Presentationer sparas som JSON i `~/Library/Application Support/Buddy/Sessions/`
 - Med ElevenLabs skickas Buddys repliker dit för att göras om till tal.
 - API-nycklarna sparas i macOS nyckelring.
 
+## Testa
+
+```sh
+make test       # enhetstester för kärnlogiken
+make e2e        # hela appen, end-to-end, med inmatade repliker
+make e2e-audio  # hela appen med riktigt tal genom en virtuell mikrofon
+```
+
+E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude.
+
+`make e2e-audio` kräver den virtuella ljudenheten [BlackHole](https://github.com/ExistentialAudio/BlackHole) som standard för in- och utljud, och en svensk röst. På GitHub Actions sätts det upp av `e2e/setup-ci.sh`. Finns repository-hemligheten `ANTHROPIC_API_KEY` körs dessutom ett test mot det riktiga Claude API:t.
+
 ## Bygga från källkod
 
 Kräver macOS 13+ och Xcode 15 eller senare.
 
 ```sh
-make test   # enhetstester för kärnlogiken
 make run    # bygger build/Buddy.app och startar den
 make zip    # build/Buddy.zip att dela
 ```
@@ -112,18 +134,28 @@ Projektet är ett Swift-paket:
 
 - `Sources/BuddyCore`: plattformsoberoende logik – frasmatchning, dialogmotor, Claude-protokoll. Testas i `Tests/BuddyCoreTests`.
 - `Sources/Buddy`: macOS-appen – taligenkänning, röster, overlay med robot, menyrad, fönster.
-- `scripts/build-app.sh`: bygger, signerar och paketerar `Buddy.app`.
+- `e2e/`: end-to-end-tester av den färdiga appen.
+- `scripts/`: bygga, signera, notarisera och kontrollera appen.
 
-## Dela appen med andra
+## Signera och notarisera (för att dela appen)
 
-Taggar som `v0.1.0` bygger en release med `Buddy.dmg` och `Buddy.zip` via GitHub Actions. För att slippa Gatekeeper-varningen behövs signering med ett Developer ID och notarisering. Lägg in dessa repository secrets så sköts det automatiskt:
+Med ett Apple Developer-konto signerar och notariserar CI appen automatiskt, så att nedladdade kopior öppnas utan varning. Lägg in hemligheterna under repots Settings → Secrets and variables → Actions:
 
 | Secret | Innehåll |
 |---|---|
-| `MACOS_CERTIFICATE_P12` | Base64 av ett exporterat "Developer ID Application"-certifikat (.p12) |
-| `MACOS_CERTIFICATE_PASSWORD` | Lösenordet till .p12-filen |
-| `MACOS_SIGN_IDENTITY` | T.ex. `Developer ID Application: Namn (TEAMID)` |
-| `APPLE_ID`, `APPLE_TEAM_ID` | Apple-konto och team-id |
-| `APPLE_APP_PASSWORD` | Appspecifikt lösenord för notarisering |
+| `MACOS_CERTIFICATE_P12` | Base64 av ett exporterat "Developer ID Application"-certifikat med nyckel: `base64 -i cert.p12 \| pbcopy` |
+| `MACOS_CERTIFICATE_PASSWORD` | Lösenordet du satte när du exporterade .p12-filen |
 
-Utan secrets byggs en osignerad (ad hoc-signerad) version.
+Och för notarisering, antingen en App Store Connect API-nyckel (rekommenderas):
+
+| Secret | Innehåll |
+|---|---|
+| `APPLE_API_KEY_P8` | Innehållet i .p8-filen |
+| `APPLE_API_KEY_ID` | Nyckelns id |
+| `APPLE_API_ISSUER_ID` | Issuer-id |
+
+eller ett Apple-ID: `APPLE_ID`, `APPLE_TEAM_ID` och `APPLE_APP_PASSWORD` (ett appspecifikt lösenord från appleid.apple.com).
+
+Certifikatet skapar du i Xcode → Settings → Accounts → Manage Certificates → + → Developer ID Application, och exporterar från Nyckelringsåtkomst som .p12. API-nyckeln skapar du i App Store Connect → Users and Access → Integrations → App Store Connect API.
+
+När hemligheterna finns kontrollerar CI också att Gatekeeper öppnar en nedladdad kopia, och bygget misslyckas annars. Taggar som `v0.1.0` publicerar en release med `Buddy.dmg` och `Buddy.zip`.

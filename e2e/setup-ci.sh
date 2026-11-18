@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Prepares a GitHub Actions macOS runner for Buddy's e2e tests:
+#  - a virtual audio device (BlackHole) as default input and output, so speech played
+#    with `say` reaches Buddy's microphone;
+#  - microphone and speech recognition permission for Buddy, so no dialogs appear.
+# Only for throwaway CI machines: it edits the user's privacy database.
+set -euo pipefail
+APP="${1:-build/Buddy.app}"
+
+echo "== System"
+sw_vers
+csrutil status || true
+system_profiler SPDisplaysDataType | grep -E "Resolution|Display Type" || true
+
+echo "== Virtual audio device"
+export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+brew install --cask blackhole-2ch
+brew install switchaudio-osx
+sudo killall -9 coreaudiod || true
+for _ in $(seq 1 30); do
+  if SwitchAudioSource -a 2>/dev/null | grep -q "BlackHole 2ch"; then break; fi
+  sleep 1
+done
+SwitchAudioSource -a
+SwitchAudioSource -t input -s "BlackHole 2ch"
+SwitchAudioSource -t output -s "BlackHole 2ch"
+echo "Input: $(SwitchAudioSource -c -t input), output: $(SwitchAudioSource -c -t output)"
+
+echo "== Swedish voices"
+say -v '?' | grep -E '\bsv[_-]SE\b' || echo "No Swedish voice installed"
+
+echo "== Permissions for Buddy"
+BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")
+REQUIREMENT=$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => //p')
+TMP=$(mktemp -d)
+echo "$REQUIREMENT" | csreq -r- -b "$TMP/csreq.bin"
+CSREQ=$(xxd -p "$TMP/csreq.bin" | tr -d '\n')
+NOW=$(date +%s)
+DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+for SERVICE in kTCCServiceMicrophone kTCCServiceSpeechRecognition; do
+  if sqlite3 "$DB" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags, last_modified) VALUES ('$SERVICE', '$BUNDLE_ID', 0, 2, 3, 1, X'$CSREQ', 0, $NOW);"; then
+    echo "Granted $SERVICE to $BUNDLE_ID"
+  else
+    echo "Could not grant $SERVICE (the audio e2e run will report it)"
+  fi
+done
+sqlite3 "$DB" "SELECT service, client, auth_value FROM access WHERE client = '$BUNDLE_ID';" || true
+killall tccd 2>/dev/null || true

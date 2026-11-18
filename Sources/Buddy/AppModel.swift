@@ -63,7 +63,8 @@ final class AppModel: ObservableObject {
     let store: SessionStore
     let avatar: AvatarState
     let live: LiveState
-    let recognizer: SpeechRecognizer
+    /// The microphone, or a test inbox in the end-to-end tests.
+    let input: SpeechInput
     let player: SpeechPlayer
     let claude: ClaudeClient
     let director: Director
@@ -78,18 +79,37 @@ final class AppModel: ObservableObject {
     private var testing = false
     private var cancellables: Set<AnyCancellable> = []
     private var tickTask: Task<Void, Never>?
+    private let options = LaunchOptions.current
+    private let commandReader: LineFileReader?
 
     init() {
+        let options = LaunchOptions.current
         let settings = AppSettings()
         let store = SessionStore()
-        let session = store.session(withID: settings.activeSessionID) ?? store.sessions.first ?? Session.example()
+        var session = store.session(withID: settings.activeSessionID) ?? store.sessions.first ?? Session.example()
+        if let file = options.sessionFile {
+            do {
+                session = try store.importFile(at: file)
+            } catch {
+                NSLog("Buddy: kunde inte läsa \(file.path): \(error)")
+                EventLog.shared.record("error", ["message": "session file: \(error.localizedDescription)"])
+            }
+        }
         let player = SpeechPlayer()
         let claude = ClaudeClient()
+        if let url = options.claudeURL {
+            claude.endpoint = url
+        }
         self.settings = settings
         self.store = store
         self.avatar = AvatarState()
         self.live = LiveState()
-        self.recognizer = SpeechRecognizer()
+        if let inbox = options.inbox {
+            self.input = InboxInput(url: inbox)
+        } else {
+            self.input = SpeechRecognizer()
+        }
+        self.commandReader = options.commands.map { LineFileReader(url: $0) }
         self.player = player
         self.claude = claude
         self.activeSession = session
@@ -103,17 +123,23 @@ final class AppModel: ObservableObject {
         director.onEvent = { [weak self] event in
             self?.handle(event)
         }
-        recognizer.onTranscript = { [weak self] id, text in
+        input.onTranscript = { [weak self] id, text in
             self?.heard(id: id, text: text)
         }
-        recognizer.onLog = { [weak self] message in
+        input.onLog = { [weak self] message in
             self?.addLog(message)
+        }
+        if let inbox = input as? InboxInput {
+            inbox.onCommand = { [weak self] command in
+                self?.perform(command)
+            }
         }
         player.onLog = { [weak self] message in
             self?.addLog(message)
         }
         player.onSubtitle = { [weak self] text in
             self?.avatar.subtitle = text
+            EventLog.shared.record("subtitle", ["text": text.map { $0 as Any } ?? NSNull()])
         }
         player.onMouth = { [weak self] level in
             self?.avatar.mouth = CGFloat(level)
@@ -134,9 +160,16 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 guard let self else { return }
                 self.director.tick()
-                let level = self.recognizer.level
+                let level = self.input.level
                 if abs(level - self.live.micLevel) > 0.002 {
                     self.live.micLevel = level
+                }
+                if let reader = self.commandReader {
+                    for object in reader.readNewObjects() {
+                        if let command = LineFileReader.command(from: object) {
+                            self.perform(command)
+                        }
+                    }
                 }
             }
         }
@@ -153,7 +186,7 @@ final class AppModel: ObservableObject {
 
     func shutdown() {
         tickTask?.cancel()
-        recognizer.stop()
+        input.stop()
         player.stopSpeaking()
     }
 
@@ -188,6 +221,7 @@ final class AppModel: ObservableObject {
             listening = false
             director.pause()
         }
+        EventLog.shared.record("listening", ["on": listening])
     }
 
     func toggleListening() {
@@ -197,8 +231,15 @@ final class AppModel: ObservableObject {
     }
 
     private func ensurePermissions() async -> Bool {
+        if input is InboxInput {
+            // Test input needs neither the microphone nor speech recognition.
+            EventLog.shared.record("permissions", ["skipped": true])
+            return true
+        }
+        EventLog.shared.record("permissions", ["before": SpeechRecognizer.permissionSummary()])
         let mic = await SpeechRecognizer.requestMicrophonePermission()
         let speech = await SpeechRecognizer.requestSpeechPermission()
+        EventLog.shared.record("permissions", ["microphone": mic, "speech": speech])
         if !mic {
             report("Buddy saknar tillgång till mikrofonen. Tillåt Buddy i Systeminställningar → Integritet och säkerhet → Mikrofon.")
             return false
@@ -222,21 +263,22 @@ final class AppModel: ObservableObject {
             // Short pause so the tail of Buddy's own voice isn't picked up.
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 300_000_000)
-                guard let self, self.micWanted, !self.recognizer.isRunning else { return }
-                self.recognizer.start(
+                guard let self, self.micWanted, !self.input.isRunning else { return }
+                self.input.start(
                     locale: self.settings.recognitionLocale,
                     contextualStrings: self.vocabulary(),
                     preferOnDevice: self.settings.preferOnDevice
                 )
             }
         } else {
-            recognizer.stop()
+            input.stop()
             live.transcript = ""
         }
     }
 
     private func heard(id: Int, text: String) {
         guard !testing else { return }
+        EventLog.shared.record("transcript", ["segment": id, "text": text])
         live.transcript = text
         director.hear(segment: id, text: text)
     }
@@ -275,7 +317,7 @@ final class AppModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         director.simulate(trimmed)
-        recognizer.restartSegment()
+        input.restartSegment()
     }
 
     func queueMoment(_ id: UUID?) {
@@ -308,7 +350,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.testing = false
             self.updateAvatar()
-            self.recognizer.restartSegment()
+            self.input.restartSegment()
         }
     }
 
@@ -357,7 +399,7 @@ final class AppModel: ObservableObject {
         settings.activeSessionID = id.uuidString
         activeSession = session
         director.updateSession(session)
-        recognizer.setVocabulary(vocabulary())
+        input.setVocabulary(vocabulary())
         addLog("Aktiv presentation: \(session.name)")
     }
 
@@ -366,7 +408,7 @@ final class AppModel: ObservableObject {
         if session.id == activeSession.id {
             activeSession = session
             director.updateSession(session)
-            recognizer.setVocabulary(vocabulary())
+            input.setVocabulary(vocabulary())
         }
     }
 
@@ -381,42 +423,114 @@ final class AppModel: ObservableObject {
     // MARK: - Events
 
     private func handle(_ event: DirectorEvent) {
+        let log = EventLog.shared
         switch event {
         case .phase(let newPhase):
             phase = newPhase
+            log.record("phase", ["phase": newPhase.rawValue])
             updateAvatar()
         case .momentStarted(let moment):
+            log.record("momentStarted", ["title": moment.title, "mode": moment.mode.rawValue])
             addLog("▶ \(moment.title)")
         case .momentEnded(let moment, let reason):
+            log.record("momentEnded", ["title": moment.title, "reason": reason.rawValue])
             addLog("■ \(moment.title) klart (\(reason.label))")
+        case .heard(let phrase, let kind):
+            log.record("heard", ["phrase": phrase, "kind": kind.rawValue])
         case .microphone(let on):
+            log.record("microphone", ["on": on])
             setMicrophone(on)
         case .presenterSaid(let text):
+            log.record("presenterSaid", ["text": text])
             addLog("Du: \(text)")
         case .buddySaid(let text):
+            log.record("buddySaid", ["text": text])
             addLog("\(activeSession.buddyName): \(text)")
         case .progressChanged:
             progressStamp += 1
+            let done = activeSession.moments.filter { director.completed.contains($0.id) }.map(\.title)
+            log.record("progress", ["completed": done])
         case .log(let message):
+            log.record("log", ["message": message])
             addLog(message)
         }
     }
 
     private func updateAvatar() {
+        let previous = avatar.mode
         if testing {
             avatar.mode = .speaking
-            return
+        } else {
+            switch phase {
+            case .paused, .listening:
+                avatar.mode = .hidden
+            case .triggered, .awaitingReply:
+                avatar.mode = .listening
+            case .thinking:
+                avatar.mode = .thinking
+            case .speaking, .closing:
+                avatar.mode = .speaking
+            }
         }
-        switch phase {
-        case .paused, .listening:
-            avatar.mode = .hidden
-        case .triggered, .awaitingReply:
-            avatar.mode = .listening
-        case .thinking:
-            avatar.mode = .thinking
-        case .speaking, .closing:
-            avatar.mode = .speaking
+        if avatar.mode != previous {
+            EventLog.shared.record("avatar", ["mode": "\(avatar.mode)"])
         }
+    }
+
+    // MARK: - Test commands
+
+    /// Commands from the end-to-end tests (inbox or command file).
+    func perform(_ command: InboxCommand) {
+        EventLog.shared.record("command", ["name": command.name, "value": command.value.map { $0 as Any } ?? NSNull()])
+        let on = command.value.map { $0 == "1" || $0.lowercased() == "true" } ?? true
+        switch command.name {
+        case "toggle":
+            toggleMoment()
+        case "interrupt":
+            interrupt()
+        case "listen":
+            Task { @MainActor in
+                await self.setListening(on)
+            }
+        case "reset":
+            resetProgress()
+        case "queue":
+            let moment = activeSession.moments.first { $0.title == command.value }
+            queueMoment(moment?.id)
+        case "testAvatar":
+            testAvatar()
+        case "snapshot":
+            snapshotRobot(name: command.value ?? "snapshot")
+        case "quit":
+            NSApp.terminate(nil)
+        default:
+            EventLog.shared.record("error", ["message": "unknown command \(command.name)"])
+        }
+    }
+
+    /// Renders the robot as it looks now, plus mouth-closed and mouth-open references,
+    /// and records how much the mouth changes the picture.
+    private func snapshotRobot(name: String) {
+        let folder = (options.dataDirectory ?? FileManager.default.temporaryDirectory)
+            .appendingPathComponent("snapshots", isDirectory: true)
+        let hue = settings.robotHue
+        var fields: [String: Any] = ["name": name, "mode": "\(avatar.mode)", "mouth": Double(avatar.mouth)]
+        if let current = RobotSnapshot.image(mode: avatar.mode == .hidden ? .listening : avatar.mode, mouth: avatar.mouth, hue: hue) {
+            let url = folder.appendingPathComponent("\(name)-current.png")
+            RobotSnapshot.write(current, to: url)
+            fields["current"] = url.path
+        }
+        if let closed = RobotSnapshot.image(mode: .speaking, mouth: 0, hue: hue),
+           let open = RobotSnapshot.image(mode: .speaking, mouth: 0.9, hue: hue) {
+            let closedURL = folder.appendingPathComponent("\(name)-mouth-closed.png")
+            let openURL = folder.appendingPathComponent("\(name)-mouth-open.png")
+            RobotSnapshot.write(closed, to: closedURL)
+            RobotSnapshot.write(open, to: openURL)
+            fields["closed"] = closedURL.path
+            fields["open"] = openURL.path
+            fields["mouthDifference"] = RobotSnapshot.difference(closed, open)
+        }
+        EventLog.shared.record("snapshot", fields)
     }
 
     func addLog(_ text: String) {

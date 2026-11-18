@@ -8,9 +8,13 @@ final class SessionStore: ObservableObject {
     let folder: URL
 
     init() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        folder = support.appendingPathComponent("Buddy/Sessions", isDirectory: true)
+        if let data = LaunchOptions.current.dataDirectory {
+            folder = data.appendingPathComponent("Sessions", isDirectory: true)
+        } else {
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+            folder = support.appendingPathComponent("Buddy/Sessions", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
         if sessions.isEmpty {

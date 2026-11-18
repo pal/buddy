@@ -25,10 +25,16 @@ public enum EndReason: String, Sendable {
     case endPhrase, lastTurn, timeout, manual, sessionChanged
 }
 
+public enum PhraseKind: String, Sendable {
+    case trigger, endPhrase
+}
+
 public enum DirectorEvent: Sendable {
     case phase(DirectorPhase)
     case momentStarted(Moment)
     case momentEnded(Moment, EndReason)
+    /// A trigger or end phrase was recognized.
+    case heard(phrase: String, kind: PhraseKind)
     /// Whether the microphone should be listening. Off while Buddy talks, so it doesn't hear itself.
     case microphone(Bool)
     case presenterSaid(String)
@@ -332,6 +338,7 @@ public final class Director {
         utteranceStart = max(0, match.range.lowerBound - 30)
         carry = ""
         background = context(before: utteranceStart)
+        emit(.heard(phrase: match.phrase, kind: .trigger))
         begin(momentFor(trigger: match.phrase), via: match.phrase)
     }
 
@@ -343,6 +350,7 @@ public final class Director {
         consumed = match.range.upperBound
         utteranceStart = consumed
         carry = ""
+        emit(.heard(phrase: match.phrase, kind: .endPhrase))
         log("Hörde «\(match.phrase)» – avslutar \(moment.title)")
         end(.endPhrase, farewell: true)
     }

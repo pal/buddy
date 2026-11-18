@@ -37,13 +37,42 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
     private var mouth: Float = 0
     private var lastWordAt: TimeInterval = 0
     private let cacheFolder: URL
+    private var stats = MouthStats()
+
+    /// How the mouth moved during one sentence (recorded for the end-to-end tests).
+    private struct MouthStats {
+        var samples = 0
+        var sum: Float = 0
+        var max: Float = 0
+        var open = 0
+
+        mutating func add(_ level: Float) {
+            samples += 1
+            sum += level
+            max = Swift.max(max, level)
+            if level > 0.15 { open += 1 }
+        }
+
+        var fields: [String: Any] {
+            [
+                "samples": samples,
+                "maxMouth": Double(max),
+                "meanMouth": samples == 0 ? 0 : Double(sum / Float(samples)),
+                "openFraction": samples == 0 ? 0 : Double(open) / Double(samples),
+            ]
+        }
+    }
 
     var isBusy: Bool { !items.isEmpty }
 
     override init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        cacheFolder = caches.appendingPathComponent("io.github.pal.buddy/tts", isDirectory: true)
+        if let data = LaunchOptions.current.dataDirectory {
+            cacheFolder = data.appendingPathComponent("Caches/tts", isDirectory: true)
+        } else {
+            cacheFolder = caches.appendingPathComponent("io.github.pal.buddy/tts", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: cacheFolder, withIntermediateDirectories: true)
         system = SystemVoice()
         super.init()
@@ -67,6 +96,9 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
     }
 
     func stopSpeaking() {
+        if !items.isEmpty {
+            EventLog.shared.record("speechStopped", ["queued": items.count])
+        }
         generation += 1
         items.removeAll()
         rendering = false
@@ -122,6 +154,27 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
     }
 
     private func produceAudio(_ text: String, config: VoiceConfig) async -> Result<Audio, Error> {
+        let started = Date()
+        let result = await produceAudioUncached(text, config: config)
+        var fields: [String: Any] = [
+            "text": text,
+            "provider": config.provider.rawValue,
+            "ms": Int(Date().timeIntervalSince(started) * 1000),
+        ]
+        switch result {
+        case .success(.file(let url)): fields["result"] = "file"; fields["file"] = url.lastPathComponent
+        case .success(.live): fields["result"] = "live"
+        case .failure(let error): fields["result"] = "failed"; fields["error"] = error.localizedDescription
+        }
+        if config.provider == .system, let voice = SystemVoice.resolveVoice(config) {
+            fields["voice"] = voice.name
+            fields["voiceLanguage"] = voice.language
+        }
+        EventLog.shared.record("tts", fields)
+        return result
+    }
+
+    private func produceAudioUncached(_ text: String, config: VoiceConfig) async -> Result<Audio, Error> {
         let url = cacheURL(for: text, config: config)
         if FileManager.default.fileExists(atPath: url.path) {
             return .success(.file(url))
@@ -188,6 +241,7 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
 
     private func startPlayback(_ item: Item, _ audio: Audio) {
         onSubtitle?(item.text)
+        stats = MouthStats()
         switch audio {
         case .file(let url):
             do {
@@ -198,7 +252,9 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
                 guard newPlayer.play() else { throw SpeechError.empty }
                 player = newPlayer
                 startMeter()
+                EventLog.shared.record("speechStarted", ["text": item.text, "mode": "file", "duration": newPlayer.duration])
             } catch {
+                EventLog.shared.record("speechError", ["text": item.text, "message": error.localizedDescription])
                 onLog?("Kunde inte spela upp ljud: \(error.localizedDescription)")
                 try? FileManager.default.removeItem(at: url)
                 items.removeFirst()
@@ -207,6 +263,7 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         case .live:
             playingLive = true
             startMeter()
+            EventLog.shared.record("speechStarted", ["text": item.text, "mode": "live"])
             let gen = generation
             let config = self.config
             Task { @MainActor [weak self] in
@@ -236,6 +293,11 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
     }
 
     private func finishedCurrent() {
+        if let finished = items.first {
+            var fields = stats.fields
+            fields["text"] = finished.text
+            EventLog.shared.record("speechEnded", fields)
+        }
         if !items.isEmpty { items.removeFirst() }
         if items.isEmpty {
             stopMeter()
@@ -262,6 +324,7 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         meterTask = nil
         mouth = 0
         onMouth?(0)
+        EventLog.shared.record("mouthClosed")
     }
 
     private func updateMouth() {
@@ -282,6 +345,9 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         let speed: Float = target > mouth ? 0.75 : 0.35
         mouth += (target - mouth) * speed
         onMouth?(mouth)
+        if player != nil || playingLive {
+            stats.add(mouth)
+        }
     }
 
     // MARK: Preparation

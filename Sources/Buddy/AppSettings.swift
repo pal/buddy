@@ -47,14 +47,18 @@ enum OverlayScreen: String, CaseIterable, Identifiable {
 /// User preferences, stored in UserDefaults (API keys in the Keychain).
 @MainActor
 final class AppSettings: ObservableObject {
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+    /// Domain used instead of the user's settings while the end-to-end tests run.
+    static let testDomain = "io.github.pal.buddy.e2e"
 
     @Published var activeSessionID: String { didSet { save(activeSessionID, "activeSessionID") } }
     @Published var isFirstLaunch: Bool { didSet { defaults.set(!isFirstLaunch, forKey: "hasLaunched") } }
     @Published var listenOnLaunch: Bool { didSet { save(listenOnLaunch, "listenOnLaunch") } }
 
     // AI
-    @Published var anthropicKey: String { didSet { Keychain.write("anthropic", anthropicKey) } }
+    @Published var anthropicKey: String {
+        didSet { if !LaunchOptions.current.isTesting { Keychain.write("anthropic", anthropicKey) } }
+    }
     @Published var claudeModel: String { didSet { save(claudeModel, "claudeModel") } }
 
     // Voice
@@ -62,7 +66,9 @@ final class AppSettings: ObservableObject {
     @Published var systemVoiceID: String { didSet { save(systemVoiceID, "systemVoiceID") } }
     @Published var speechRate: Double { didSet { save(speechRate, "speechRate") } }
     @Published var speechPitch: Double { didSet { save(speechPitch, "speechPitch") } }
-    @Published var elevenLabsKey: String { didSet { Keychain.write("elevenlabs", elevenLabsKey) } }
+    @Published var elevenLabsKey: String {
+        didSet { if !LaunchOptions.current.isTesting { Keychain.write("elevenlabs", elevenLabsKey) } }
+    }
     @Published var elevenLabsVoiceID: String { didSet { save(elevenLabsVoiceID, "elevenLabsVoiceID") } }
     @Published var elevenLabsModel: String { didSet { save(elevenLabsModel, "elevenLabsModel") } }
 
@@ -82,21 +88,39 @@ final class AppSettings: ObservableObject {
     @Published var robotHue: Double { didSet { save(robotHue, "robotHue") } }
 
     init() {
-        let d = UserDefaults.standard
-        func string(_ key: String, _ fallback: String) -> String { d.string(forKey: key) ?? fallback }
-        func double(_ key: String, _ fallback: Double) -> Double { d.object(forKey: key) == nil ? fallback : d.double(forKey: key) }
-        func bool(_ key: String, _ fallback: Bool) -> Bool { d.object(forKey: key) == nil ? fallback : d.bool(forKey: key) }
+        let options = LaunchOptions.current
+        let d: UserDefaults
+        if options.isTesting {
+            // Tests start from clean settings and never touch the user's own.
+            UserDefaults.standard.removePersistentDomain(forName: AppSettings.testDomain)
+            d = UserDefaults(suiteName: AppSettings.testDomain) ?? .standard
+        } else {
+            d = UserDefaults.standard
+        }
+        defaults = d
+        let overrides = options.settingOverrides
+        func string(_ key: String, _ fallback: String) -> String {
+            overrides[key] ?? d.string(forKey: key) ?? fallback
+        }
+        func double(_ key: String, _ fallback: Double) -> Double {
+            if let value = overrides[key].flatMap(Double.init) { return value }
+            return d.object(forKey: key) == nil ? fallback : d.double(forKey: key)
+        }
+        func bool(_ key: String, _ fallback: Bool) -> Bool {
+            if let value = overrides[key] { return value == "1" || value.lowercased() == "true" }
+            return d.object(forKey: key) == nil ? fallback : d.bool(forKey: key)
+        }
 
         activeSessionID = string("activeSessionID", "")
-        isFirstLaunch = !d.bool(forKey: "hasLaunched")
+        isFirstLaunch = options.isTesting ? false : !d.bool(forKey: "hasLaunched")
         listenOnLaunch = bool("listenOnLaunch", true)
-        anthropicKey = Keychain.read("anthropic")
+        anthropicKey = options.isTesting ? (options.anthropicKey ?? "") : Keychain.read("anthropic")
         claudeModel = string("claudeModel", ClaudeAPI.defaultModel)
         voiceProvider = VoiceProvider(rawValue: string("voiceProvider", "")) ?? .system
         systemVoiceID = string("systemVoiceID", "")
         speechRate = double("speechRate", 0.5)
         speechPitch = double("speechPitch", 1.2)
-        elevenLabsKey = Keychain.read("elevenlabs")
+        elevenLabsKey = options.isTesting ? (overrides["elevenLabsKey"] ?? "") : Keychain.read("elevenlabs")
         elevenLabsVoiceID = string("elevenLabsVoiceID", "")
         elevenLabsModel = string("elevenLabsModel", "eleven_flash_v2_5")
         recognitionLocale = string("recognitionLocale", "sv-SE")
