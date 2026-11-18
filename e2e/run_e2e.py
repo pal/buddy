@@ -633,7 +633,8 @@ def check_overlay_on_top(ctx, overlay, windows):
           "overlay is not in the bottom right corner (gaps %.0f, %.0f)" % (right_gap, bottom_gap))
     mine = [w for w in windows if w["owner"] == "Buddy" and abs(w["w"] - frame["w"]) < 2 and abs(w["h"] - frame["h"]) < 2]
     check(mine, "the overlay window is not on screen")
-    presentation = [w for w in windows if w["owner"] == "PresentationStub" and w["w"] > 300]
+    presentation = sorted((w for w in windows if w["owner"] == "PresentationStub" and w["alpha"] > 0),
+                          key=lambda w: w["w"] * w["h"], reverse=True)
     check(presentation, "the presentation window is not on screen")
     check(mine[0]["order"] < presentation[0]["order"], "the overlay is behind the presentation")
     full = presentation[0]["w"] >= screen["w"] - 1 and presentation[0]["h"] >= screen["h"] - 1

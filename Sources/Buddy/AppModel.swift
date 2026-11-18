@@ -159,8 +159,9 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 guard let self else { return }
-                self.director.tick()
                 let level = self.input.level
+                self.director.audioLevel(level)
+                self.director.tick()
                 if abs(level - self.live.micLevel) > 0.002 {
                     self.live.micLevel = level
                 }

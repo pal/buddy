@@ -304,6 +304,53 @@ final class DirectorTests: XCTestCase {
         XCTAssertFalse(question.contains("AI är spännande"), message)
     }
 
+    func testWaitsWhileTheMicrophoneStillHearsSpeech() async {
+        let h = Harness()
+        h.say("vad tycker du buddy")
+        h.wait(1.0)
+        await h.settle()
+        h.finishSpeaking()
+        XCTAssertEqual(h.director.phase, .awaitingReply)
+
+        h.say("Men är det")
+        // Two more seconds of speech that the recognizer has not delivered yet.
+        for _ in 0..<20 {
+            h.director.audioLevel(0.2)
+            h.wait(0.1)
+        }
+        XCTAssertEqual(h.director.phase, .awaitingReply, "the speaker is still talking")
+        h.director.audioLevel(0)
+        h.wait(0.7)
+        XCTAssertEqual(h.director.phase, .thinking)
+    }
+
+    func testNoisyRoomDoesNotBlockReplies() async {
+        let h = Harness()
+        h.say("vad tycker du buddy")
+        h.wait(1.0)
+        await h.settle()
+        h.finishSpeaking()
+        h.say("Men är det farligt?")
+        for _ in 0..<40 {
+            h.director.audioLevel(0.2)
+            h.wait(0.1)
+        }
+        XCTAssertEqual(h.director.phase, .thinking)
+    }
+
+    func testWaitsLongerWhenTheSpeakerStopsInsideAnEndPhrase() async {
+        let h = Harness()
+        h.say("vad tycker du buddy")
+        h.wait(1.0)
+        await h.settle()
+        h.finishSpeaking()
+        h.say("Tack")
+        h.wait(2.0)
+        XCTAssertEqual(h.director.phase, .awaitingReply, "waits for the rest of \"tack buddy\"")
+        h.director.hear(segment: h.segment, text: "Tack Buddy")
+        XCTAssertEqual(h.director.phase, .closing)
+    }
+
     func testPausedDirectorIgnoresTriggers() {
         let h = Harness()
         h.director.pause()

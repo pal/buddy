@@ -58,6 +58,13 @@ public struct DirectorSettings: Equatable, Sendable {
     public var thinkingTimeout: TimeInterval = 12
     /// Hard cap on how much of a Claude reply is spoken.
     public var maxSpokenCharacters: Int = 700
+    /// The microphone must also have been quiet this long before an utterance counts as
+    /// finished; speech recognition can lag a second or more behind the voice.
+    public var voiceSilence: TimeInterval = 0.6
+    /// Longest extra wait for the microphone to go quiet (protects against a noisy room).
+    public var maxVoiceWait: TimeInterval = 2.0
+    /// Extra wait when the speaker stops in the middle of an end phrase ("tack …").
+    public var endPhraseGrace: TimeInterval = 1.5
 
     public init() {}
 }
@@ -103,6 +110,9 @@ public final class Director {
     private var carry = ""
     private var history: [String] = []
     private var lastHeardChange: Date
+    /// Last time the microphone level indicated speech.
+    private var lastVoiceAt: Date = .distantPast
+    private var noiseFloor: Float = 0.002
 
     // Dialog state.
     private var background = ""
@@ -272,7 +282,7 @@ public final class Director {
         let t = now()
         switch phase {
         case .triggered:
-            if t.timeIntervalSince(lastHeardChange) >= settings.triggerSilence
+            if utteranceFinished(at: t, silence: settings.triggerSilence)
                 || t.timeIntervalSince(triggerAt) >= settings.maxTriggerWait {
                 let said = currentUtterance()
                 takeUtterance()
@@ -292,7 +302,7 @@ public final class Director {
         case .awaitingReply:
             let said = currentUtterance()
             if !said.isEmpty {
-                if t.timeIntervalSince(lastHeardChange) >= settings.replySilence {
+                if utteranceFinished(at: t, silence: settings.replySilence) {
                     takeUtterance()
                     emit(.presenterSaid(said))
                     reply(to: said, manual: false)
@@ -307,6 +317,52 @@ public final class Director {
         case .listening, .paused:
             break
         }
+    }
+
+    /// Microphone level (RMS, 0...1), called about ten times a second. It tells a real pause
+    /// from speech recognition that has not caught up yet.
+    public func audioLevel(_ level: Float) {
+        if level < noiseFloor {
+            noiseFloor = level
+        } else {
+            noiseFloor += (level - noiseFloor) * 0.002
+        }
+        if level > max(0.004, noiseFloor * 3) {
+            lastVoiceAt = now()
+        }
+    }
+
+    /// The speaker has finished: the transcript has stopped changing, the microphone is quiet
+    /// (or has not gone quiet within a reasonable time), and they did not stop halfway through
+    /// an end phrase.
+    private func utteranceFinished(at t: Date, silence: TimeInterval) -> Bool {
+        let quietText = t.timeIntervalSince(lastHeardChange)
+        var needed = silence
+        if endsWithStartOfEndPhrase() {
+            needed += settings.endPhraseGrace
+        }
+        guard quietText >= needed else { return false }
+        let quietVoice = t.timeIntervalSince(lastVoiceAt)
+        return quietVoice >= settings.voiceSilence || quietText >= needed + settings.maxVoiceWait
+    }
+
+    /// True when the last words heard are the beginning of an end phrase, like "tack" in "tack buddy".
+    private func endsWithStartOfEndPhrase() -> Bool {
+        guard let moment = activeMoment else { return false }
+        let heard = segment.tokens[min(max(consumed, utteranceStart), segment.tokens.count)...].map(matcher.canonical)
+        guard !heard.isEmpty else { return false }
+        for phrase in moment.endPhrases + session.endPhrases {
+            let words = TextNormalizer.tokens(phrase).map(matcher.canonical)
+            guard words.count > 1 else { continue }
+            for length in stride(from: min(words.count - 1, heard.count), through: 1, by: -1) {
+                let tail = Array(heard.suffix(length))
+                let head = Array(words.prefix(length))
+                if zip(tail, head).allSatisfy({ PhraseMatcher.similarity($0, $1) >= matcher.requiredScore(for: $1) }) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     // MARK: - Transcript handling
