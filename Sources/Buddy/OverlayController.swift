@@ -139,6 +139,9 @@ final class OverlayController {
         panel.isMovable = false
 
         let host = NSHostingView(rootView: OverlayView(avatar: avatar, settings: settings))
+        // The panel keeps the size and position set here. Without this, SwiftUI resizes the
+        // window to fit long subtitles and the robot slides off the screen.
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: width, height: height)
         host.wantsLayer = true
         host.layer?.backgroundColor = NSColor.clear.cgColor

@@ -3,6 +3,14 @@ import CryptoKit
 import Foundation
 import BuddyCore
 
+/// How often the mouth is updated, and the length of the audio windows it follows.
+private enum MouthTiming {
+    static let meterInterval = 1.0 / 30.0
+    static let envelopeWindow = 0.02
+    /// Syllables per second used to shape the mouth within a word.
+    static let syllableRate = 4.0
+}
+
 /// Plays Buddy's sentences in order. Renders the next sentence while the current one plays,
 /// caches rendered audio on disk, and reports a mouth-opening level for lip sync.
 @MainActor
@@ -24,6 +32,8 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         let text: String
         var audio: Audio?
         var failed = false
+        /// Mouth opening per 20 ms of the rendered audio, so the mouth follows the syllables.
+        var envelope: [Float] = []
     }
 
     /// The first item is the one playing (or about to play).
@@ -45,20 +55,31 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         var sum: Float = 0
         var max: Float = 0
         var open = 0
+        /// How many times the mouth opened (with hysteresis), roughly one per syllable.
+        var openings = 0
+        private var isOpen = false
 
         mutating func add(_ level: Float) {
             samples += 1
             sum += level
             max = Swift.max(max, level)
             if level > 0.15 { open += 1 }
+            if !isOpen, level > 0.45 {
+                isOpen = true
+                openings += 1
+            } else if isOpen, level < 0.2 {
+                isOpen = false
+            }
         }
 
         var fields: [String: Any] {
             [
                 "samples": samples,
+                "seconds": Double(samples) * MouthTiming.meterInterval,
                 "maxMouth": Double(max),
                 "meanMouth": samples == 0 ? 0 : Double(sum / Float(samples)),
                 "openFraction": samples == 0 ? 0 : Double(open) / Double(samples),
+                "openings": openings,
             ]
         }
     }
@@ -144,6 +165,9 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
                 switch result {
                 case .success(let audio):
                     self.items[index].audio = audio
+                    if case .file(let url) = audio {
+                        self.items[index].envelope = SpeechPlayer.envelope(of: url)
+                    }
                 case .failure(let error):
                     self.items[index].failed = true
                     self.onLog?("Röst: \(error.localizedDescription)")
@@ -312,7 +336,7 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         guard meterTask == nil else { return }
         meterTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 33_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(MouthTiming.meterInterval * 1_000_000_000))
                 guard let self else { return }
                 self.updateMouth()
             }
@@ -330,9 +354,15 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
     private func updateMouth() {
         var target: Float = 0
         if let player, player.isPlaying {
-            player.updateMeters()
-            let power = player.averagePower(forChannel: 0) // dB, about -160...0
-            target = max(0, min(1, (power + 40) / 30))
+            if let envelope = items.first?.envelope, !envelope.isEmpty {
+                // A little ahead of the audio, since drawing the frame takes a moment.
+                let index = Int((player.currentTime + 0.03) / MouthTiming.envelopeWindow)
+                target = index < envelope.count ? envelope[index] : 0
+            } else {
+                player.updateMeters()
+                let power = player.averagePower(forChannel: 0) // dB, about -160...0
+                target = max(0, min(1, (power + 40) / 30))
+            }
         } else if playingLive {
             // No audio levels when speaking directly: flap with the rhythm of the words.
             let t = Date().timeIntervalSinceReferenceDate
@@ -342,12 +372,64 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
             target = Float(wave * envelope)
         }
         // Open fast, close a little slower.
-        let speed: Float = target > mouth ? 0.75 : 0.35
+        let speed: Float = target > mouth ? 0.75 : 0.7
         mouth += (target - mouth) * speed
         onMouth?(mouth)
         if player != nil || playingLive {
             stats.add(mouth)
         }
+    }
+
+    /// Mouth opening per 20 ms of an audio file. The mouth opens when there is sound and
+    /// closes in the pauses between words. Synthetic voices are nearly equally loud through a
+    /// word, so within a word the opening is shaped at a syllable-like rhythm that restarts at
+    /// every word onset.
+    static func envelope(of url: URL) -> [Float] {
+        guard let file = try? AVAudioFile(forReading: url) else { return [] }
+        let format = file.processingFormat
+        let length = AVAudioFrameCount(file.length)
+        guard length > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: length),
+              (try? file.read(into: buffer)) != nil,
+              let samples = buffer.floatChannelData?[0]
+        else { return [] }
+        let count = Int(buffer.frameLength)
+        let hop = max(1, Int(format.sampleRate * MouthTiming.envelopeWindow))
+        var loudness: [Float] = []
+        var start = 0
+        while start < count {
+            let end = min(count, start + hop)
+            var sum: Float = 0
+            for i in start..<end {
+                sum += samples[i] * samples[i]
+            }
+            let rms = (sum / Float(end - start)).squareRoot()
+            loudness.append(20 * log10(max(rms, 0.000_001)))
+            start = end
+        }
+        guard !loudness.isEmpty else { return [] }
+        let sorted = loudness.sorted()
+        let loud = sorted[Int(Float(sorted.count - 1) * 0.95)]
+        var mouth: [Float] = []
+        mouth.reserveCapacity(loudness.count)
+        var quiet = true
+        var onset = 0
+        for (index, level) in loudness.enumerated() {
+            let energy = max(0, min(1, (level - (loud - 12)) / 10))
+            if quiet, energy > 0.5 {
+                quiet = false
+                onset = index
+            } else if !quiet, energy < 0.25 {
+                quiet = true
+            }
+            if quiet {
+                mouth.append(energy)
+            } else {
+                let t = Double(index - onset) * MouthTiming.envelopeWindow
+                mouth.append(energy * Float(abs(cos(Double.pi * MouthTiming.syllableRate * t))))
+            }
+        }
+        return mouth
     }
 
     // MARK: Preparation

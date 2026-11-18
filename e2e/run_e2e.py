@@ -383,12 +383,12 @@ class Buddy:
         self.read()
         return len(self.events)
 
-    def find_all(self, kind, since=0):
+    def find_all(self, event_type, since=0):
         self.read()
-        return [e for e in self.events[since:] if e.get("type") == kind]
+        return [e for e in self.events[since:] if e.get("type") == event_type]
 
-    def last(self, kind):
-        found = self.find_all(kind)
+    def last(self, event_type):
+        found = self.find_all(event_type)
         return found[-1] if found else None
 
     def wait_for(self, predicate, timeout, what, since=0):
@@ -407,10 +407,10 @@ class Buddy:
         recent = "; ".join(describe(e) for e in self.events[-8:])
         raise TestFailure("timed out after %.0fs waiting for %s (last events: %s)" % (timeout * self.slow, what, recent))
 
-    def wait_type(self, kind, timeout, since=0, **fields):
+    def wait_type(self, event_type, timeout, since=0, **fields):
         def matches(event):
-            return event.get("type") == kind and all(event.get(k) == v for k, v in fields.items())
-        label = kind + (" " + json.dumps(fields, ensure_ascii=False) if fields else "")
+            return event.get("type") == event_type and all(event.get(k) == v for k, v in fields.items())
+        label = event_type + (" " + json.dumps(fields, ensure_ascii=False) if fields else "")
         return self.wait_for(matches, timeout, label, since)
 
     def phase(self):
@@ -563,14 +563,15 @@ def test_ordinary_speech(ctx):
     since = buddy.mark()
     buddy.say("Idag ska vi prata om hur AI förändrar arbetslivet.")
     if ctx.mode == "audio":
-        heard = buddy.wait_type("transcript", 15, since)
-        ctx.note("Mikrofonen hörde: %s" % heard.get("text"))
+        buddy.wait_type("transcript", 15, since)
     time.sleep(3 * buddy.slow)
     check(not buddy.find_all("momentStarted", since), "a moment started without a trigger phrase")
     transcripts = buddy.find_all("transcript", since)
     check(transcripts, "nothing was heard")
-    text = normalize(transcripts[-1]["text"]).lower()
-    check("arbetslivet" in text or "ai" in text, "speech was not recognized correctly: %r" % text)
+    text = normalize(transcripts[-1]["text"])
+    check("arbetslivet" in text.lower(), "speech was not recognized correctly: %r" % text)
+    if ctx.mode == "audio":
+        ctx.note("Mikrofonen och taligenkänningen hörde: \u201c%s\u201d" % text)
 
 
 @test("T04", "Triggerfras startar dialogen; Buddy svarar och syns över presentationen",
@@ -678,6 +679,10 @@ def test_lip_sync(ctx):
         check(sentence["samples"] >= 5, "too few mouth samples for %r" % sentence["text"])
         check(sentence["maxMouth"] >= 0.3, "the mouth barely opened (max %.2f) for %r" % (sentence["maxMouth"], sentence["text"]))
         check(sentence["openFraction"] >= 0.15, "the mouth was open only %.0f%% of the time" % (sentence["openFraction"] * 100))
+        check(sentence["openFraction"] <= 0.92,
+              "the mouth stayed open %.0f%% of the time instead of following the syllables" % (sentence["openFraction"] * 100))
+        rate = sentence["openings"] / max(sentence["seconds"], 0.1)
+        check(rate >= 1.0, "the mouth opened only %.1f times per second for %r" % (rate, sentence["text"]))
     closed = buddy.find_all("mouthClosed", since)
     check(closed and closed[-1]["t"] >= ended[-1]["t"] - 0.5, "the mouth did not close after speaking")
     snapshot = buddy.wait_type("snapshot", 10, since)
@@ -687,7 +692,9 @@ def test_lip_sync(ctx):
         check(path and Path(path).exists(), "snapshot %s missing" % key)
         shutil.copy(path, ctx.out / Path(path).name)
     modes = {t.get("result") for t in tts}
-    ctx.note("Talsyntes: %s; munöppning max %.2f" % (", ".join(sorted(modes)), max(s["maxMouth"] for s in ended)))
+    rates = [s["openings"] / max(s["seconds"], 0.1) for s in ended]
+    ctx.note("Talsyntes: %s; munnen öppnas %.1f gånger per sekund, öppen %.0f%% av tiden" % (
+        ", ".join(sorted(modes)), sum(rates) / len(rates), 100 * sum(s["openFraction"] for s in ended) / len(ended)))
 
 
 @test("T06", "Följdfråga: Buddy svarar igen med samtalet som sammanhang", ["UC6"])
@@ -823,8 +830,8 @@ def test_fallback(ctx):
     started = buddy.wait_type("momentStarted", 20, since)
     check(started["title"] == "Kan AI ta jobben?", "started %r" % started["title"])
     buddy.wait_type("claudeError", 15, since)
-    speech = buddy.wait_type("speechStarted", 15, since)
-    check(normalize(speech["text"]) in ctx.scenario["fallbackLines"], "Buddy said %r instead of a fallback line" % speech["text"])
+    said = buddy.wait_type("buddySaid", 30, since)
+    check(normalize(said["text"]) in ctx.scenario["fallbackLines"], "Buddy said %r instead of a fallback line" % said["text"])
     buddy.wait_type("phase", 40, since, phase="listening")
 
 

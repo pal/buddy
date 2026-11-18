@@ -334,8 +334,9 @@ public final class Director {
 
     private func detectTrigger() {
         guard let match = matcher.firstMatch(of: allTriggers(), in: segment.tokens, from: consumed) else { return }
+        // The question may start a little before the trigger, but never in words already used.
+        utteranceStart = max(consumed, match.range.lowerBound - 30)
         consumed = match.range.upperBound
-        utteranceStart = max(0, match.range.lowerBound - 30)
         carry = ""
         background = context(before: utteranceStart)
         emit(.heard(phrase: match.phrase, kind: .trigger))

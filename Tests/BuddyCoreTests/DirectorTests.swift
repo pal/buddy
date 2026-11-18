@@ -285,6 +285,25 @@ final class DirectorTests: XCTestCase {
         XCTAssertEqual(micEvents, [true, false])
     }
 
+    func testQuestionDoesNotRepeatWordsFromAnEarlierMoment() async {
+        let h = Harness()
+        // One long recognition segment, as with continuous server recognition.
+        let first = "AI är spännande. Vad tycker du Buddy?"
+        h.director.hear(segment: 1, text: first)
+        XCTAssertEqual(h.director.phase, .triggered)
+        h.director.toggle() // ended before Buddy answers, so the microphone stays on
+        XCTAssertEqual(h.director.phase, .listening)
+
+        h.director.hear(segment: 1, text: first + " Nu något annat. Vad tycker du Buddy?")
+        XCTAssertEqual(h.director.phase, .triggered)
+        h.wait(1.0)
+        await h.settle()
+        let message = h.brain.requests.last?.messages.last?.text ?? ""
+        let question = message.components(separatedBy: "[Talaren vänder sig till dig och säger]").last ?? ""
+        XCTAssertTrue(question.contains("Nu något annat. Vad tycker du Buddy?"), message)
+        XCTAssertFalse(question.contains("AI är spännande"), message)
+    }
+
     func testPausedDirectorIgnoresTriggers() {
         let h = Harness()
         h.director.pause()
