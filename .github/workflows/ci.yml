@@ -1,5 +1,7 @@
 name: CI
 
+# One macOS job: build, unit tests, signing and notarization (when the Developer ID
+# secrets exist), distribution check, then end-to-end tests of the same app bundle.
 on:
   push:
     branches: [main]
@@ -7,11 +9,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-test:
     runs-on: macos-15
+    timeout-minutes: 50
     env:
       # Signing and notarization run when the Developer ID secrets exist (see README).
       HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v5
 
@@ -59,4 +63,29 @@ jobs:
         with:
           name: Buddy
           path: build/Buddy.zip
+          retention-days: 14
+
+      # End-to-end tests of the app bundle built above.
+      - name: Prepare runner for e2e (virtual microphone, permissions)
+        run: e2e/setup-ci.sh build/Buddy.app
+
+      - name: E2E – injected speech
+        timeout-minutes: 15
+        run: python3 e2e/run_e2e.py --mode inject --out build/e2e/inject
+
+      - name: E2E – real speech through the microphone
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: python3 e2e/run_e2e.py --mode audio --out build/e2e/audio
+
+      - name: E2E – real Claude API
+        if: ${{ !cancelled() && env.ANTHROPIC_API_KEY != '' }}
+        timeout-minutes: 10
+        run: python3 e2e/run_e2e.py --mode live --out build/e2e/live
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-results
+          path: build/e2e
           retention-days: 14

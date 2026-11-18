@@ -119,7 +119,7 @@ make e2e-audio  # hela appen med riktigt tal genom en virtuell mikrofon
 
 E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude.
 
-`make e2e-audio` kräver den virtuella ljudenheten [BlackHole](https://github.com/ExistentialAudio/BlackHole) som standard för in- och utljud, och en svensk röst. På GitHub Actions sätts det upp av `e2e/setup-ci.sh`. Finns repository-hemligheten `ANTHROPIC_API_KEY` körs dessutom ett test mot det riktiga Claude API:t.
+`make e2e-audio` kräver den virtuella ljudenheten [BlackHole](https://github.com/ExistentialAudio/BlackHole) som standard för in- och utljud, och en svensk röst. I GitHub Actions körs båda varianterna vid varje push, i samma jobb som bygger appen, och `e2e/setup-ci.sh` förbereder maskinen. Resultat, skärmdumpar och loggar laddas upp som artefakten `e2e-results`. Finns repository-hemligheten `ANTHROPIC_API_KEY` körs dessutom ett test mot det riktiga Claude API:t.
 
 ## Bygga från källkod
 
