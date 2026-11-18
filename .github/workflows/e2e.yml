@@ -25,18 +25,21 @@ jobs:
         run: e2e/setup-ci.sh build/Buddy.app
 
       - name: E2E – injected speech
+        timeout-minutes: 15
         run: python3 e2e/run_e2e.py --mode inject --out build/e2e/inject
 
       - name: E2E – real speech through the microphone
-        if: always()
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: python3 e2e/run_e2e.py --mode audio --out build/e2e/audio
 
       - name: E2E – real Claude API
-        if: always() && env.ANTHROPIC_API_KEY != ''
+        if: ${{ !cancelled() && env.ANTHROPIC_API_KEY != '' }}
+        timeout-minutes: 10
         run: python3 e2e/run_e2e.py --mode live --out build/e2e/live
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ !cancelled() }}
         with:
           name: e2e-results
           path: |

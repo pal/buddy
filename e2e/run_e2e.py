@@ -955,13 +955,22 @@ def main():
     buddy = Buddy(args, out, mock.url, voice)
     ctx = Context(buddy, mock, tools, out, args.mode, scenario)
     results = []
+    blocked = None
     try:
-        buddy.launch()
+        try:
+            buddy.launch()
+        except subprocess.CalledProcessError as error:
+            blocked = "Buddy could not be opened: %s" % (error.stderr or error)
         for entry in TESTS:
             result = {"id": entry["id"], "title": entry["title"], "useCases": entry["useCases"], "seconds": 0.0}
             if args.mode not in entry["modes"]:
                 result["status"] = "skipped"
                 result["error"] = "inte i läget %s" % args.mode
+                results.append(result)
+                continue
+            if blocked:
+                result["status"] = "failed" if entry["id"] == "T01" else "skipped"
+                result["error"] = blocked
                 results.append(result)
                 continue
             began = time.time()
@@ -978,6 +987,9 @@ def main():
             result["seconds"] = time.time() - began
             print("%s %s: %s %s" % (entry["id"], entry["title"], result["status"], result.get("error", "")), flush=True)
             results.append(result)
+            if entry["id"] == "T01" and result["status"] == "failed":
+                blocked = "skipped because the app did not start correctly (T01)"
+                continue
             if result["status"] == "failed" and entry["id"] != "T14" and buddy.alive():
                 try:
                     buddy.ensure_listening()
