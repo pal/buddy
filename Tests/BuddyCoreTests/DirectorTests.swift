@@ -236,7 +236,7 @@ final class DirectorTests: XCTestCase {
         await h.settle()
         XCTAssertEqual(h.director.phase, .speaking)
         // The old recognition task reports Buddy's own voice after the mic was turned off.
-        h.director.hear(segment: segment, text: "vad tycker du buddy hej från claude tack buddy")
+        h.director.hear(segment: h.segment, text: "vad tycker du buddy hej från claude tack buddy")
         h.finishSpeaking()
         XCTAssertEqual(h.director.phase, .awaitingReply)
         h.wait(5)
