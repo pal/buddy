@@ -34,7 +34,7 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIO = ROOT / "e2e" / "scenario.json"
@@ -442,12 +442,13 @@ class MockElevenLabs:
 
             def do_GET(self):
                 url = urlparse(self.path)
+                path = unquote(url.path)
                 query = parse_qs(url.query)
                 headers = {k.lower(): v for k, v in self.headers.items()}
-                if url.path.startswith("/previews/"):
+                if path.startswith("/previews/"):
                     self.reply(200, mock.speech_audio("Hej! Så här låter jag."), "audio/wav")
                     return
-                if url.path == "/v1/shared-voices":
+                if path == "/v1/shared-voices":
                     problems = self.key_problems(headers)
                     if query.get("language") != ["sv"]:
                         problems.append("language filter is %r, expected sv" % query.get("language"))
@@ -458,7 +459,7 @@ class MockElevenLabs:
                     self.reply(200, {"voices": mock.library, "has_more": False, "total_count": len(mock.library),
                                      "last_sort_id": None})
                     return
-                if url.path == "/v1/voices":
+                if path == "/v1/voices":
                     self.record("myVoices", problems=self.key_problems(headers))
                     self.reply(200, {"voices": mock.mine})
                     return
@@ -466,6 +467,7 @@ class MockElevenLabs:
 
             def do_POST(self):
                 url = urlparse(self.path)
+                path = unquote(url.path)
                 query = parse_qs(url.query)
                 headers = {k.lower(): v for k, v in self.headers.items()}
                 length = int(self.headers.get("content-length") or 0)
@@ -474,7 +476,7 @@ class MockElevenLabs:
                     body = json.loads(raw)
                 except ValueError:
                     body = None
-                speech = re.fullmatch(r"/v1/text-to-speech/([A-Za-z0-9_-]+)", url.path)
+                speech = re.fullmatch(r"/v1/text-to-speech/([A-Za-z0-9_.~-]+)", path)
                 if speech:
                     voice_id = speech.group(1)
                     problems = validate_speech(headers, query, body)
@@ -494,7 +496,7 @@ class MockElevenLabs:
                         return
                     self.reply(200, mock.speech_audio(body["text"]), "audio/wav")
                     return
-                add = re.fullmatch(r"/v1/voices/add/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)", url.path)
+                add = re.fullmatch(r"/v1/voices/add/([A-Za-z0-9_.~-]+)/([A-Za-z0-9_.~-]+)", path)
                 if add:
                     owner, voice_id = add.group(1), add.group(2)
                     problems = self.key_problems(headers)

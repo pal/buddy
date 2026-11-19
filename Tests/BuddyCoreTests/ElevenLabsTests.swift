@@ -50,6 +50,9 @@ final class ElevenLabsProtocolTests: XCTestCase {
         let multilingual = try json(ElevenLabsAPI.speechRequest(text: "Hej!", model: "eleven_multilingual_v2", languageCode: "sv"))
         XCTAssertNil(multilingual["language_code"], "multilingual_v2 rejects language_code")
         XCTAssertEqual(ElevenLabsAPI.speechPath(voiceID: "abc123XYZ"), "/v1/text-to-speech/abc123XYZ")
+        XCTAssertEqual(ElevenLabsAPI.speechPath(voiceID: "added-lib_1.v~2"), "/v1/text-to-speech/added-lib_1.v~2")
+        XCTAssertEqual(ElevenLabsAPI.speechPath(voiceID: "a/b c"), "/v1/text-to-speech/a%2Fb%20c")
+        XCTAssertEqual(ElevenLabsAPI.addVoicePath(ownerID: "owner-1", voiceID: "lib-1"), "/v1/voices/add/owner-1/lib-1")
     }
 
     func testFileExtensionFollowsContentType() {

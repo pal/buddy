@@ -79,8 +79,7 @@ struct ElevenLabsClient {
             }
         }
         guard let owner = voice.publicOwnerID, !owner.isEmpty else { return voice.id }
-        let path = "/v1/voices/add/\(Self.encode(owner))/\(Self.encode(voice.id))"
-        var request = try makeRequest(path: path, method: "POST")
+        var request = try makeRequest(path: ElevenLabsAPI.addVoicePath(ownerID: owner, voiceID: voice.id), method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["new_name": voice.name])
         do {
@@ -99,10 +98,6 @@ struct ElevenLabsClient {
     }
 
     // MARK: Requests
-
-    private static func encode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? value
-    }
 
     private func makeRequest(path: String, query: [URLQueryItem] = [], method: String = "GET") throws -> URLRequest {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)

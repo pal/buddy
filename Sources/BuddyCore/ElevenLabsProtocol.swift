@@ -58,9 +58,20 @@ public enum ElevenLabsAPI {
         return SpeechRequest(text: text, modelID: model, languageCode: code)
     }
 
+    /// RFC 3986 unreserved characters: safe in a path segment without encoding.
+    static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+    static func pathSegment(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: unreserved) ?? value
+    }
+
     public static func speechPath(voiceID: String) -> String {
-        let encoded = voiceID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? voiceID
-        return "/v1/text-to-speech/\(encoded)"
+        "/v1/text-to-speech/\(pathSegment(voiceID))"
+    }
+
+    /// Adds a Voice Library voice to "My voices".
+    public static func addVoicePath(ownerID: String, voiceID: String) -> String {
+        "/v1/voices/add/\(pathSegment(ownerID))/\(pathSegment(voiceID))"
     }
 
     /// File extension for the audio in a response.
