@@ -1,0 +1,221 @@
+import AVFoundation
+import SwiftUI
+import BuddyCore
+
+struct SettingsView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        TabView {
+            VoiceSettingsTab(model: model, settings: settings)
+                .tabItem { Text("Röst") }
+            AISettingsTab(model: model, settings: settings)
+                .tabItem { Text("AI") }
+            ListeningSettingsTab(settings: settings)
+                .tabItem { Text("Lyssna") }
+            AvatarSettingsTab(model: model, settings: settings)
+                .tabItem { Text("Avatar") }
+            ShortcutsTab()
+                .tabItem { Text("Kortkommandon") }
+        }
+        .padding(16)
+    }
+}
+
+private struct VoiceSettingsTab: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        Form {
+            Picker("Röst", selection: $settings.voiceProvider) {
+                ForEach(VoiceProvider.allCases) { provider in
+                    Text(provider.label).tag(provider)
+                }
+            }
+
+            if settings.voiceProvider == .system {
+                Picker("macOS-röst", selection: $settings.systemVoiceID) {
+                    Text("Bästa tillgängliga för språket").tag("")
+                    ForEach(SystemVoice.voices(for: settings.recognitionLocale), id: \.identifier) { voice in
+                        Text("\(voice.name) (\(SystemVoice.qualityLabel(voice)))").tag(voice.identifier)
+                    }
+                }
+                Text("Fler och bättre röster: Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster. Ladda ner en svensk röst i premium- eller förbättrad kvalitet.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Slider(value: $settings.speechRate, in: 0.35...0.65) {
+                    Text("Tempo")
+                }
+                Slider(value: $settings.speechPitch, in: 0.7...1.7) {
+                    Text("Tonhöjd")
+                }
+            } else {
+                SecureField("API-nyckel", text: $settings.elevenLabsKey)
+                TextField("Röst-id", text: $settings.elevenLabsVoiceID)
+                TextField("Modell", text: $settings.elevenLabsModel)
+                Text("Hämta nyckel och röst-id på elevenlabs.io (Voice Library har svenska röster). Modellen eleven_flash_v2_5 är snabbast; eleven_multilingual_v2 låter ofta bäst. Om ElevenLabs inte svarar används macOS-rösten.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button("Testa rösten") {
+                    model.testAvatar()
+                }
+                Button("Förbered fasta repliker") {
+                    model.prepareLines()
+                }
+                .help("Renderar alla fasta repliker i förväg så att de spelas upp direkt och fungerar utan nätverk.")
+            }
+        }
+    }
+}
+
+private struct AISettingsTab: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var settings: AppSettings
+    @State private var testResult = ""
+
+    var body: some View {
+        Form {
+            SecureField("Anthropic API-nyckel", text: $settings.anthropicKey)
+            Picker("Modell", selection: $settings.claudeModel) {
+                ForEach(ClaudeAPI.modelOptions) { option in
+                    Text(option.label).tag(option.id)
+                }
+                if !ClaudeAPI.modelOptions.contains(where: { $0.id == settings.claudeModel }) {
+                    Text(settings.claudeModel).tag(settings.claudeModel)
+                }
+            }
+            Text("Skaffa en nyckel på console.anthropic.com. Under en dialog skickas det du säger (och några minuter bakåt) till Claude. Snabbare modeller ger kortare väntan på scen.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Testa anslutningen") {
+                    testResult = "Testar…"
+                    Task { @MainActor in
+                        testResult = await model.testClaude()
+                    }
+                }
+                Text(testResult)
+                    .font(.caption)
+                    .lineLimit(3)
+            }
+        }
+    }
+}
+
+private struct ListeningSettingsTab: View {
+    @ObservedObject var settings: AppSettings
+
+    private let languages: [(String, String)] = [
+        ("sv-SE", "Svenska"),
+        ("en-US", "Engelska (USA)"),
+        ("en-GB", "Engelska (Storbritannien)"),
+        ("nb-NO", "Norska"),
+        ("da-DK", "Danska"),
+        ("fi-FI", "Finska"),
+        ("de-DE", "Tyska"),
+    ]
+
+    var body: some View {
+        Form {
+            Picker("Språk", selection: $settings.recognitionLocale) {
+                ForEach(languages, id: \.0) { language in
+                    Text(language.1).tag(language.0)
+                }
+            }
+            Toggle("Taligenkänning på datorn när det går (fungerar utan nätverk)", isOn: $settings.preferOnDevice)
+            Toggle("Börja lyssna när Buddy startar", isOn: $settings.listenOnLaunch)
+
+            Slider(value: $settings.matchThreshold, in: 0.6...0.95) {
+                Text("Fraser")
+            } minimumValueLabel: {
+                Text("Förlåtande")
+            } maximumValueLabel: {
+                Text("Exakta")
+            }
+            Slider(value: $settings.triggerSilence, in: 0.3...2.5) {
+                Text("Paus före svar: \(settings.triggerSilence, specifier: "%.1f") s")
+            }
+            Slider(value: $settings.replySilence, in: 0.6...3.5) {
+                Text("Paus som betyder att du pratat klart: \(settings.replySilence, specifier: "%.1f") s")
+            }
+            Slider(value: $settings.idleTimeout, in: 0...120, step: 5) {
+                Text(settings.idleTimeout == 0
+                     ? "Buddy väntar på svar hur länge som helst"
+                     : "Buddy går undan efter \(Int(settings.idleTimeout)) s tystnad")
+            }
+            Text("Tips: säg triggerfrasen tydligt och avsluta frågan med en kort paus. Använd kontrollpanelen för att se vad Buddy hör.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct AvatarSettingsTab: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        Form {
+            Picker("Hörn", selection: $settings.corner) {
+                ForEach(OverlayCorner.allCases) { corner in
+                    Text(corner.label).tag(corner)
+                }
+            }
+            Picker("Skärm", selection: $settings.screen) {
+                ForEach(OverlayScreen.allCases) { screen in
+                    Text(screen.label).tag(screen)
+                }
+            }
+            Slider(value: $settings.avatarSize, in: 120...380, step: 10) {
+                Text("Storlek: \(Int(settings.avatarSize)) pt")
+            }
+            HStack {
+                Slider(value: $settings.robotHue, in: 0...1) {
+                    Text("Färg")
+                }
+                Circle()
+                    .fill(Color(hue: settings.robotHue, saturation: 0.75, brightness: 0.95))
+                    .frame(width: 18, height: 18)
+            }
+            Toggle("Visa textning i en pratbubbla", isOn: $settings.showSubtitles)
+            Button("Testa avataren") {
+                model.testAvatar()
+            }
+            Text("Avataren ligger över allt annat, även bildspel i helskärm. Syns den inte över Keynote: tillåt andra appar att använda skärmen under bildspel i Keynotes inställningar, eller spela upp bildspelet i ett fönster.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct ShortcutsTab: View {
+    var body: some View {
+        Form {
+            row("⌃⌥⌘ B", "Starta nästa moment nu / avsluta dialogen")
+            row("⌃⌥⌘ .", "Tyst! Avbryt Buddys replik")
+            row("⌃⌥⌘ L", "Slå på/av lyssnandet")
+            Text("Kortkommandona fungerar även när presentationsprogrammet ligger överst.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func row(_ keys: String, _ action: String) -> some View {
+        HStack {
+            Text(keys)
+                .font(.system(.body, design: .monospaced))
+                .frame(width: 90, alignment: .leading)
+            Text(action)
+        }
+    }
+}
