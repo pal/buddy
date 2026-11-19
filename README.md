@@ -146,7 +146,7 @@ Med ett Apple Developer-konto signerar och notariserar CI appen automatiskt, så
 - I Xcode: Settings → Accounts → Manage Certificates → + → Developer ID Application. Xcode måste vara inloggat med Account Holderns Apple-ID. Annars svarar Apple "This operation can only be performed by the Account Holder".
 - På webben: öppna Nyckelhanterare (Keychain Access) → Certificate Assistant → Request a Certificate From a Certificate Authority, fyll i e-post och namn och välj "Saved to disk". Logga in som Account Holder på [developer.apple.com](https://developer.apple.com/account/resources/certificates/add), välj Developer ID Application och G2 Sub-CA, ladda upp filen och ladda ner certifikatet. Dubbelklicka på det, så hamnar det i nyckelringen tillsammans med nyckeln.
 
-Exportera sedan certifikatet med nyckel som .p12: Nyckelhanterare → My Certificates → högerklicka på "Developer ID Application: …" → Export.
+Exportera sedan certifikatet med nyckel som .p12: Nyckelhanterare → My Certificates → högerklicka på "Developer ID Application: …" → Export. Står det "certificate is not trusted" saknar datorn Apples mellancertifikat [Developer ID - G2](https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer). Det spelar ingen roll för exporten, och CI installerar det själv.
 
 | Secret | Innehåll |
 |---|---|
