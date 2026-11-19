@@ -13,7 +13,7 @@ En liten AI-robot som sitter i hörnet av skärmen när du presenterar. Buddy ly
   - **AI**: Claude svarar fritt utifrån ett grovt manus och det du faktiskt säger.
   - **Manus**: Buddy säger dina repliker ordagrant, en per svar. Inget nätverk behövs för AI.
 - Animerad robot med läppsynk och textning, ovanpå bildspel i helskärm.
-- Röster: macOS inbyggda (gratis, fungerar offline) eller ElevenLabs.
+- Röster: ElevenLabs Eleven v4 Turbo för naturligt tal där Buddy kan skratta, sucka och viska, eller macOS inbyggda röster (gratis, fungerar offline).
 - Reservrepliker om Claude inte svarar i tid. Fasta repliker kan renderas i förväg.
 - Globala kortkommandon för att starta, tysta och avsluta Buddy.
 
@@ -44,9 +44,19 @@ Vid första start: tillåt mikrofon och taligenkänning när macOS frågar. Budd
 ## Kom igång
 
 1. **Inställningar → AI**: klistra in en Anthropic API-nyckel från [console.anthropic.com](https://console.anthropic.com). Standardmodell är Claude Opus 5.5. Sonnet 5.5 och Haiku 5.5 svarar snabbare.
-2. **Inställningar → Röst**: välj röst. För bäst svensk macOS-röst: Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster, och ladda ner en svensk röst i premium- eller förbättrad kvalitet.
+2. **Inställningar → Röst**: välj ElevenLabs, klistra in en API-nyckel från [elevenlabs.io](https://elevenlabs.io) och tryck **Välj röst…**. Där kan du lyssna på svenska röster ur ElevenLabs Voice Library och välja en. Utan ElevenLabs används macOS-rösten; ladda då ner en svensk röst i premium- eller förbättrad kvalitet (Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster).
 3. **Redigera presentationer**: en exempelpresentation finns redan. Ändra triggerfraser, avslutsfraser och moment.
 4. **Kontrollpanel**: skriv "Vad tycker du, Buddy?" och tryck Skicka för att testa utan mikrofon. Säg det sedan högt.
+
+## Röst
+
+Med ElevenLabs är **Eleven v4 Turbo** förvalt: ElevenLabs mest uttrycksfulla modell som är snabb nog för en dialog live. Ett svar från Buddy kostar ungefär en cent. Välj en röst som är inspelad på svenska; en engelsk röst talar svenska med brytning.
+
+- **Ljudtaggar**: Claude får lägga in `[laughs]`, `[chuckles]`, `[sighs]`, `[whispers]`, `[excited]`, `[curious]`, `[mischievously]` och `[surprised]`, och rösten skrattar, suckar eller viskar. Taggarna syns inte i textningen. Du kan också skriva dem i dina egna repliker.
+- **Förbered repliker**: fasta repliker renderas med Eleven v4, den bästa modellen, och spelas sedan upp direkt från datorn.
+- Svarar inte ElevenLabs pratar Buddy vidare med macOS-rösten.
+
+Modellerna Eleven v4 (högst kvalitet men långsammare) och Flash v2.5 (snabbast) finns också att välja.
 
 ## Så fungerar en dialog
 
@@ -82,7 +92,7 @@ De fungerar även när presentationsprogrammet ligger överst.
 
 - Repetera med samma mikrofon och högtalare som på scenen. Kontrollpanelen visar vad Buddy hör.
 - Välj triggerfraser som du inte säger av misstag, och gör en kort paus efter frågan.
-- Tryck "Förbered repliker" i menyn innan du går upp på scen. Fasta repliker spelas då upp direkt.
+- Tryck "Förbered repliker" i menyn innan du går upp på scen. Fasta repliker spelas då upp direkt, och med ElevenLabs i högsta kvalitet.
 - AI-läget kräver nätverk. Manus-läget fungerar utan (taligenkänningen fungerar offline om svenska stöds på datorn).
 - Har du en extern skärm eller projektor kan avataren visas på den, på alla skärmar eller bara på huvudskärmen (Inställningar → Avatar).
 - Syns inte avataren över Keynote: tillåt andra appar att använda skärmen under bildspel i Keynotes inställningar, eller spela upp bildspelet i ett fönster.
@@ -103,7 +113,7 @@ Presentationer sparas som JSON i `~/Library/Application Support/Buddy/Sessions/`
 | `moments[].triggers`, `moments[].endPhrases` | Momentets egna fraser |
 | `moments[].mode` | `"ai"` eller `"scripted"` |
 | `moments[].script` | Grovt manus för AI-läget |
-| `moments[].lines` | Repliker: sägs ordagrant i manusläge, reserv i AI-läge |
+| `moments[].lines` | Repliker: sägs ordagrant i manusläge, reserv i AI-läge. Ljudtaggar som `[laughs]` fungerar med ElevenLabs |
 | `moments[].maxTurns` | Högsta antal svar (0 = tills en avslutsfras sägs) |
 | `moments[].enabled` | `false` hoppar över momentet |
 
@@ -122,7 +132,7 @@ make e2e        # hela appen, end-to-end, med inmatade repliker
 make e2e-audio  # hela appen med riktigt tal genom en virtuell mikrofon
 ```
 
-E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude.
+E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Sedan startas appen igen med ElevenLabs mot en låtsasserver som kontrollerar varje anrop och svarar med riktigt svenskt tal: en svensk röst väljs ur röstbiblioteket, Eleven v4 Turbo med ljudtaggar, fasta repliker förberedda med Eleven v4 och reserv till macOS-rösten. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude och ElevenLabs.
 
 `make e2e-audio` kräver den virtuella ljudenheten [BlackHole](https://github.com/ExistentialAudio/BlackHole) som standard för in- och utljud, och en svensk röst. I GitHub Actions körs båda varianterna vid varje push, i samma jobb som bygger appen, och `e2e/setup-ci.sh` förbereder maskinen. Resultat, skärmdumpar och loggar laddas upp som artefakten `e2e-results`. Finns repository-hemligheten `ANTHROPIC_API_KEY` körs dessutom ett test mot det riktiga Claude API:t.
 

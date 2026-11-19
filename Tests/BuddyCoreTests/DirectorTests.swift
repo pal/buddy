@@ -4,10 +4,12 @@ import XCTest
 @MainActor
 final class FakeVoice: VoiceOutput {
     var spoken: [String] = []
+    var kinds: [SpeechKind] = []
     var isBusy = false
 
-    func enqueue(_ sentence: String) {
+    func enqueue(_ sentence: String, kind: SpeechKind) {
         spoken.append(sentence)
+        kinds.append(kind)
         isBusy = true
     }
 

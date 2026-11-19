@@ -70,7 +70,13 @@ final class AppSettings: ObservableObject {
         didSet { if !LaunchOptions.current.isTesting { Keychain.write("elevenlabs", elevenLabsKey) } }
     }
     @Published var elevenLabsVoiceID: String { didSet { save(elevenLabsVoiceID, "elevenLabsVoiceID") } }
+    /// Shown in the settings; the voice id is what matters.
+    @Published var elevenLabsVoiceName: String { didSet { save(elevenLabsVoiceName, "elevenLabsVoiceName") } }
     @Published var elevenLabsModel: String { didSet { save(elevenLabsModel, "elevenLabsModel") } }
+    @Published var elevenLabsAudioTags: Bool { didSet { save(elevenLabsAudioTags, "elevenLabsAudioTags") } }
+    @Published var elevenLabsPreparedQuality: Bool {
+        didSet { save(elevenLabsPreparedQuality, "elevenLabsPreparedQuality") }
+    }
 
     // Listening
     @Published var recognitionLocale: String { didSet { save(recognitionLocale, "recognitionLocale") } }
@@ -122,7 +128,10 @@ final class AppSettings: ObservableObject {
         speechPitch = double("speechPitch", 1.2)
         elevenLabsKey = options.isTesting ? (overrides["elevenLabsKey"] ?? "") : Keychain.read("elevenlabs")
         elevenLabsVoiceID = string("elevenLabsVoiceID", "")
-        elevenLabsModel = string("elevenLabsModel", "eleven_flash_v2_5")
+        elevenLabsVoiceName = string("elevenLabsVoiceName", "")
+        elevenLabsModel = string("elevenLabsModel", ElevenLabsAPI.defaultModel)
+        elevenLabsAudioTags = bool("elevenLabsAudioTags", true)
+        elevenLabsPreparedQuality = bool("elevenLabsPreparedQuality", true)
         recognitionLocale = string("recognitionLocale", "sv-SE")
         preferOnDevice = bool("preferOnDevice", true)
         matchThreshold = double("matchThreshold", 0.75)
@@ -142,6 +151,8 @@ final class AppSettings: ObservableObject {
         s.triggerSilence = triggerSilence
         s.replySilence = replySilence
         s.idleTimeout = idleTimeout
+        s.audioTags = voiceProvider == .elevenLabs && elevenLabsAudioTags
+            && ElevenLabsAPI.supportsAudioTags(elevenLabsModel)
         return s
     }
 

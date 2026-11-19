@@ -29,7 +29,9 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
 
     private struct Item {
         let id: Int
+        /// The sentence as the director gave it, possibly with audio tags.
         let text: String
+        let kind: SpeechKind
         var audio: Audio?
         var failed = false
         /// Mouth opening per 20 ms of the rendered audio, so the mouth follows the syllables.
@@ -108,11 +110,12 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
 
     // MARK: VoiceOutput
 
-    func enqueue(_ sentence: String) {
+    func enqueue(_ sentence: String, kind: SpeechKind) {
         let text = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        // A sentence that is only an audio tag has nothing to say for voices without tags.
+        guard !text.isEmpty, config.speaksAudioTags || !AudioTags.strip(text).isEmpty else { return }
         counter += 1
-        items.append(Item(id: counter, text: text))
+        items.append(Item(id: counter, text: text, kind: kind))
         pump()
     }
 
@@ -158,7 +161,7 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         let config = self.config
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let result = await self.produceAudio(item.text, config: config)
+            let result = await self.produceAudio(item.text, kind: item.kind, config: config)
             guard gen == self.generation else { return }
             self.rendering = false
             if let index = self.items.firstIndex(where: { $0.id == item.id }) {
@@ -177,52 +180,107 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         }
     }
 
-    private func produceAudio(_ text: String, config: VoiceConfig) async -> Result<Audio, Error> {
+    private func produceAudio(
+        _ text: String,
+        kind: SpeechKind,
+        config: VoiceConfig,
+        preparing: Bool = false
+    ) async -> Result<Audio, Error> {
         let started = Date()
-        let result = await produceAudioUncached(text, config: config)
         var fields: [String: Any] = [
-            "text": text,
+            "text": AudioTags.strip(text),
+            "kind": kind.rawValue,
             "provider": config.provider.rawValue,
-            "ms": Int(Date().timeIntervalSince(started) * 1000),
         ]
+        let result: Result<Audio, Error>
+        switch config.provider {
+        case .system:
+            result = await systemAudio(text, config: config, fields: &fields)
+        case .elevenLabs:
+            result = await elevenLabsAudio(text, kind: kind, config: config, preparing: preparing, fields: &fields)
+        }
+        fields["ms"] = Int(Date().timeIntervalSince(started) * 1000)
         switch result {
         case .success(.file(let url)): fields["result"] = "file"; fields["file"] = url.lastPathComponent
         case .success(.live): fields["result"] = "live"
         case .failure(let error): fields["result"] = "failed"; fields["error"] = error.localizedDescription
         }
-        if config.provider == .system, let voice = SystemVoice.resolveVoice(config) {
-            fields["voice"] = voice.name
-            fields["voiceLanguage"] = voice.language
-        }
         EventLog.shared.record("tts", fields)
         return result
     }
 
-    private func produceAudioUncached(_ text: String, config: VoiceConfig) async -> Result<Audio, Error> {
-        let url = cacheURL(for: text, config: config)
-        if FileManager.default.fileExists(atPath: url.path) {
-            return .success(.file(url))
+    /// macOS voice. Audio tags would be read aloud, so they are removed.
+    private func systemAudio(_ text: String, config: VoiceConfig, fields: inout [String: Any]) async -> Result<Audio, Error> {
+        let spoken = AudioTags.strip(text)
+        fields["spoken"] = spoken
+        let voice = SystemVoice.resolveVoice(config)
+        if let voice {
+            fields["voice"] = voice.name
+            fields["voiceLanguage"] = voice.language
         }
-        switch config.provider {
-        case .system:
-            return await renderSystem(text, config: config, to: url)
-        case .elevenLabs:
-            let voice = ElevenLabsVoice(
-                apiKey: config.elevenKey,
-                voiceID: config.elevenVoiceID,
-                modelID: config.elevenModel,
-                languageCode: String(config.language.prefix(2)).lowercased()
-            )
-            do {
-                try await voice.render(text, to: url)
-                return .success(.file(url))
-            } catch {
-                // Keep talking with the built-in voice if the network or the key fails on stage.
-                onLog?("\(error.localizedDescription) – använder macOS-rösten")
-                var fallback = config
-                fallback.provider = .system
-                return await renderSystem(text, config: fallback, to: cacheURL(for: text, config: fallback))
+        guard !spoken.isEmpty else { return .failure(SpeechError.empty) }
+        let base = cacheBase("system|\(voice?.identifier ?? config.language)|\(config.rate)|\(config.pitch)|\(spoken)")
+        if let cached = cachedFile(base) {
+            fields["cached"] = true
+            return .success(.file(cached))
+        }
+        fields["cached"] = false
+        return await renderSystem(spoken, config: config, to: base.appendingPathExtension("caf"))
+    }
+
+    /// ElevenLabs. Fixed lines prepared ahead of time use the best model and play from the
+    /// cache; everything else is rendered with the selected model. Falls back to the macOS
+    /// voice if ElevenLabs fails, so Buddy keeps talking on stage.
+    private func elevenLabsAudio(
+        _ text: String,
+        kind: SpeechKind,
+        config: VoiceConfig,
+        preparing: Bool,
+        fields: inout [String: Any]
+    ) async -> Result<Audio, Error> {
+        let selected = config.elevenModel
+        let best = config.elevenPreparedQuality ? ElevenLabsAPI.preparedModel(for: selected) : selected
+        func spoken(_ model: String) -> String {
+            config.elevenAudioTags && ElevenLabsAPI.supportsAudioTags(model) ? text : AudioTags.strip(text)
+        }
+        var models = [selected]
+        if kind == .fixed, best != selected {
+            models = preparing ? [best] : [best, selected]
+        }
+        for model in models {
+            if let cached = cachedFile(elevenLabsBase(spoken(model), model: model, config: config)) {
+                fields["model"] = model
+                fields["spoken"] = spoken(model)
+                fields["cached"] = true
+                return .success(.file(cached))
             }
+        }
+        let model = preparing ? models[0] : selected
+        let sentence = spoken(model)
+        fields["model"] = model
+        fields["spoken"] = sentence
+        fields["cached"] = false
+        guard !sentence.isEmpty else { return .failure(SpeechError.empty) }
+        do {
+            let client = ElevenLabsClient(apiKey: config.elevenKey)
+            let audio = try await client.speech(
+                sentence,
+                voiceID: config.elevenVoiceID,
+                model: model,
+                languageCode: ElevenLabsAPI.languageCode(locale: config.language)
+            )
+            let url = elevenLabsBase(sentence, model: model, config: config).appendingPathExtension(audio.fileExtension)
+            try audio.data.write(to: url, options: .atomic)
+            return .success(.file(url))
+        } catch {
+            // Keep talking with the built-in voice if the network or the key fails on stage.
+            onLog?("\(error.localizedDescription) – använder macOS-rösten")
+            fields["fallback"] = true
+            fields["elevenLabsError"] = error.localizedDescription
+            fields["provider"] = VoiceProvider.system.rawValue
+            var fallback = config
+            fallback.provider = .system
+            return await systemAudio(text, config: fallback, fields: &fields)
         }
     }
 
@@ -245,26 +303,32 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         }
     }
 
-    private func cacheURL(for text: String, config: VoiceConfig) -> URL {
-        let key: String
-        let ext: String
-        switch config.provider {
-        case .system:
-            let voice = SystemVoice.resolveVoice(config)?.identifier ?? config.language
-            key = "system|\(voice)|\(config.rate)|\(config.pitch)|\(text)"
-            ext = "caf"
-        case .elevenLabs:
-            key = "eleven|\(config.elevenVoiceID)|\(config.elevenModel)|\(config.language)|\(text)"
-            ext = "mp3"
-        }
+    // MARK: Cache
+
+    /// Cache file path without extension; the extension depends on the audio format.
+    private func cacheBase(_ key: String) -> URL {
         let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-        return cacheFolder.appendingPathComponent(String(digest.prefix(40))).appendingPathExtension(ext)
+        return cacheFolder.appendingPathComponent(String(digest.prefix(40)))
+    }
+
+    private func elevenLabsBase(_ spoken: String, model: String, config: VoiceConfig) -> URL {
+        let language = ElevenLabsAPI.languageCode(locale: config.language)
+        return cacheBase("eleven|\(config.elevenVoiceID)|\(model)|\(language)|\(spoken)")
+    }
+
+    private func cachedFile(_ base: URL) -> URL? {
+        for ext in ["mp3", "wav", "caf", "aac"] {
+            let url = base.appendingPathExtension(ext)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        return nil
     }
 
     // MARK: Playback
 
     private func startPlayback(_ item: Item, _ audio: Audio) {
-        onSubtitle?(item.text)
+        let subtitle = AudioTags.strip(item.text)
+        onSubtitle?(subtitle.isEmpty ? nil : subtitle)
         stats = MouthStats()
         switch audio {
         case .file(let url):
@@ -276,9 +340,11 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
                 guard newPlayer.play() else { throw SpeechError.empty }
                 player = newPlayer
                 startMeter()
-                EventLog.shared.record("speechStarted", ["text": item.text, "mode": "file", "duration": newPlayer.duration])
+                EventLog.shared.record("speechStarted", [
+                    "text": subtitle, "spoken": item.text, "mode": "file", "duration": newPlayer.duration,
+                ])
             } catch {
-                EventLog.shared.record("speechError", ["text": item.text, "message": error.localizedDescription])
+                EventLog.shared.record("speechError", ["text": subtitle, "message": error.localizedDescription])
                 onLog?("Kunde inte spela upp ljud: \(error.localizedDescription)")
                 try? FileManager.default.removeItem(at: url)
                 items.removeFirst()
@@ -287,12 +353,12 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
         case .live:
             playingLive = true
             startMeter()
-            EventLog.shared.record("speechStarted", ["text": item.text, "mode": "live"])
+            EventLog.shared.record("speechStarted", ["text": subtitle, "spoken": item.text, "mode": "live"])
             let gen = generation
             let config = self.config
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                await self.system.speakLive(item.text, config: config)
+                await self.system.speakLive(subtitle, config: config)
                 guard gen == self.generation, self.playingLive else { return }
                 self.playingLive = false
                 self.finishedCurrent()
@@ -319,7 +385,7 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
     private func finishedCurrent() {
         if let finished = items.first {
             var fields = stats.fields
-            fields["text"] = finished.text
+            fields["text"] = AudioTags.strip(finished.text)
             EventLog.shared.record("speechEnded", fields)
         }
         if !items.isEmpty { items.removeFirst() }
@@ -434,14 +500,15 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
 
     // MARK: Preparation
 
-    /// Renders lines ahead of time so they play instantly (and work offline) on stage.
+    /// Renders fixed lines ahead of time so they play instantly (and work offline) on stage.
+    /// With ElevenLabs they are rendered with the best model, since waiting doesn't matter here.
     func prepare(_ texts: [String]) async -> (rendered: Int, failed: Int) {
         let config = self.config
         var rendered = 0
         var failed = 0
         for text in texts {
             for sentence in SentenceSplitter.split(text) {
-                switch await produceAudio(sentence, config: config) {
+                switch await produceAudio(sentence, kind: .fixed, config: config, preparing: true) {
                 case .success(.file(_)): rendered += 1
                 default: failed += 1
                 }

@@ -61,6 +61,7 @@ public struct SentenceSplitter: Sendable {
 
 public enum SpeechText {
     /// Removes things that shouldn't be read aloud: markdown, stage directions, emoji.
+    /// Allowed audio tags such as [laughs] are kept; the voice decides whether to use them.
     public static func sanitize(_ text: String) -> String {
         var s = text
         // Bold markers first, so **word** keeps its word.
@@ -69,7 +70,7 @@ public enum SpeechText {
         // *stage directions* and (stage directions)
         s = s.replacingOccurrences(of: #"\*[^*]{1,80}\*"#, with: " ", options: .regularExpression)
         s = s.replacingOccurrences(of: #"\([^)]{1,80}\)"#, with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"\[[^\]]{1,80}\]"#, with: " ", options: .regularExpression)
+        s = AudioTags.normalize(s)
         // Markdown markers and list bullets
         s = s.replacingOccurrences(of: #"[*_#`>]"#, with: "", options: .regularExpression)
         s = s.replacingOccurrences(of: #"(?m)^\s*[-•]\s+"#, with: "", options: .regularExpression)
