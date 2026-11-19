@@ -15,6 +15,7 @@ jobs:
     env:
       # Signing and notarization run when the Developer ID secrets exist (see README).
       HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_API_KEY_P8 != '' || secrets.APPLE_ID != '' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v5
@@ -23,6 +24,18 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+
+      # Fails fast if Apple rejects the notarization credentials, also before a certificate exists.
+      - name: Check notarization credentials
+        if: env.HAS_NOTARIZATION == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: scripts/notarize.sh --check
 
       - name: Build
         run: swift build

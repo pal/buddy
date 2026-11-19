@@ -4,16 +4,27 @@
 #   App Store Connect API key: APPLE_API_KEY_P8 (contents of the .p8 file),
 #                              APPLE_API_KEY_ID, APPLE_API_ISSUER_ID
 #   Apple ID:                  APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD (app-specific password)
+# With --check it only verifies that Apple accepts the credentials, without submitting anything.
 set -euo pipefail
+CHECK=0
+if [ "${1:-}" = "--check" ]; then CHECK=1; shift; fi
 APP="${1:-build/Buddy.app}"
 WORK=$(mktemp -d)
 if [ -n "${APPLE_API_KEY_P8:-}" ]; then
   printf '%s\n' "$APPLE_API_KEY_P8" > "$WORK/AuthKey.p8"
   AUTH=(--key "$WORK/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
+  echo "Using an App Store Connect API key."
 elif [ -n "${APPLE_ID:-}" ]; then
   AUTH=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
+  echo "Using an Apple ID."
 else
   echo "No notarization credentials set; skipping notarization."
+  exit 0
+fi
+if [ "$CHECK" = 1 ]; then
+  # Lists earlier submissions. Fails if Apple rejects the credentials.
+  xcrun notarytool history "${AUTH[@]}"
+  echo "Apple accepts the notarization credentials."
   exit 0
 fi
 ditto -c -k --keepParent "$APP" "$WORK/Buddy.zip"

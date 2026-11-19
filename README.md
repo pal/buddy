@@ -139,14 +139,21 @@ Projektet är ett Swift-paket:
 
 ## Signera och notarisera (för att dela appen)
 
-Med ett Apple Developer-konto signerar och notariserar CI appen automatiskt, så att nedladdade kopior öppnas utan varning. Lägg in hemligheterna under repots Settings → Secrets and variables → Actions:
+Med ett Apple Developer-konto signerar och notariserar CI appen automatiskt, så att nedladdade kopior öppnas utan varning. Lägg in hemligheterna under repots Settings → Secrets and variables → Actions.
+
+**Certifikat.** Ett "Developer ID Application"-certifikat kan bara skapas av kontots Account Holder.
+
+- I Xcode: Settings → Accounts → Manage Certificates → + → Developer ID Application. Xcode måste vara inloggat med Account Holderns Apple-ID. Annars svarar Apple "This operation can only be performed by the Account Holder".
+- På webben: öppna Nyckelhanterare (Keychain Access) → Certificate Assistant → Request a Certificate From a Certificate Authority, fyll i e-post och namn och välj "Saved to disk". Logga in som Account Holder på [developer.apple.com](https://developer.apple.com/account/resources/certificates/add), välj Developer ID Application och G2 Sub-CA, ladda upp filen och ladda ner certifikatet. Dubbelklicka på det, så hamnar det i nyckelringen tillsammans med nyckeln.
+
+Exportera sedan certifikatet med nyckel som .p12: Nyckelhanterare → My Certificates → högerklicka på "Developer ID Application: …" → Export.
 
 | Secret | Innehåll |
 |---|---|
-| `MACOS_CERTIFICATE_P12` | Base64 av ett exporterat "Developer ID Application"-certifikat med nyckel: `base64 -i cert.p12 \| pbcopy` |
-| `MACOS_CERTIFICATE_PASSWORD` | Lösenordet du satte när du exporterade .p12-filen |
+| `MACOS_CERTIFICATE_P12` | Base64 av .p12-filen: `base64 -i cert.p12 \| pbcopy` |
+| `MACOS_CERTIFICATE_PASSWORD` | Lösenordet du satte vid exporten |
 
-Och för notarisering, antingen en App Store Connect API-nyckel (rekommenderas):
+**Notarisering**, antingen med en App Store Connect API-nyckel (rekommenderas, skapas i App Store Connect → Users and Access → Integrations → App Store Connect API):
 
 | Secret | Innehåll |
 |---|---|
@@ -154,8 +161,6 @@ Och för notarisering, antingen en App Store Connect API-nyckel (rekommenderas):
 | `APPLE_API_KEY_ID` | Nyckelns id |
 | `APPLE_API_ISSUER_ID` | Issuer-id |
 
-eller ett Apple-ID: `APPLE_ID`, `APPLE_TEAM_ID` och `APPLE_APP_PASSWORD` (ett appspecifikt lösenord från appleid.apple.com).
+eller med ett Apple-ID: `APPLE_ID`, `APPLE_TEAM_ID` och `APPLE_APP_PASSWORD` (ett appspecifikt lösenord från appleid.apple.com).
 
-Certifikatet skapar du i Xcode → Settings → Accounts → Manage Certificates → + → Developer ID Application, och exporterar från Nyckelringsåtkomst som .p12. API-nyckeln skapar du i App Store Connect → Users and Access → Integrations → App Store Connect API.
-
-När hemligheterna finns kontrollerar CI också att Gatekeeper öppnar en nedladdad kopia, och bygget misslyckas annars. Taggar som `v0.1.0` publicerar en release med `Buddy.dmg` och `Buddy.zip`.
+CI kontrollerar att Apple godtar notariseringsuppgifterna så snart de finns. När certifikatet också finns kontrollerar CI att Gatekeeper öppnar en nedladdad kopia, och bygget misslyckas annars. Taggar som `v0.1.0` publicerar en release med `Buddy.dmg` och `Buddy.zip`.
