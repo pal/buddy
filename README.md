@@ -19,20 +19,25 @@ En liten AI-robot som sitter i hörnet av skärmen när du presenterar. Buddy ly
 
 ## Installera
 
-**Från källkod (rekommenderas just nu):** kräver Xcode eller Command Line Tools.
+**Ladda ner:** hämta `Buddy.dmg` från [Releases](../../releases), öppna den och dra Buddy till Program. Appen är signerad med Developer ID-certifikatet "Developer ID Application: Subtree Communications AB (Q4RJ7389LU)" och notariserad av Apple, så macOS öppnar den utan att blockera den. Första gången frågar macOS bara om du vill öppna en app som hämtats från internet.
+
+Så kontrollerar du signaturen:
+
+```sh
+spctl -a -vv /Applications/Buddy.app
+# /Applications/Buddy.app: accepted
+# source=Notarized Developer ID
+# origin=Developer ID Application: Subtree Communications AB (Q4RJ7389LU)
+```
+
+**Från källkod:** kräver Xcode eller Command Line Tools.
 
 ```sh
 git clone https://github.com/pal/buddy.git && cd buddy
 make install   # bygger, lägger Buddy i /Applications och startar
 ```
 
-En app du byggt själv har ingen karantänflagga, så macOS öppnar den utan varning.
-
-**Nedladdad app:** ladda ner `Buddy.dmg` från [Releases](../../releases). Är versionen signerad och notariserad med ett Developer ID öppnas den direkt. Annars stoppar macOS den ("Apple could not verify …"). Öppna den då via Systeminställningar → Integritet och säkerhet → Öppna ändå, eller ta bort karantänflaggan i Terminal:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/Buddy.app
-```
+En app du byggt själv signeras inte med Developer ID, men den har ingen karantänflagga, så macOS öppnar den ändå.
 
 Vid första start: tillåt mikrofon och taligenkänning när macOS frågar. Buddy syns som en ikon i menyraden (ingen ikon i Dock).
 
@@ -127,7 +132,7 @@ Kräver macOS 13+ och Xcode 15 eller senare.
 
 ```sh
 make run    # bygger build/Buddy.app och startar den
-make zip    # build/Buddy.zip att dela
+make zip    # build/Buddy.zip, ad hoc-signerad om inte SIGN_IDENTITY är satt
 ```
 
 Projektet är ett Swift-paket:
@@ -137,9 +142,15 @@ Projektet är ett Swift-paket:
 - `e2e/`: end-to-end-tester av den färdiga appen.
 - `scripts/`: bygga, signera, notarisera och kontrollera appen.
 
-## Signera och notarisera (för att dela appen)
+## Signering och notarisering
 
-Med ett Apple Developer-konto signerar och notariserar CI appen automatiskt, så att nedladdade kopior öppnas utan varning. Lägg in hemligheterna under repots Settings → Secrets and variables → Actions.
+Alla byggen från CI och Releases signeras med "Developer ID Application: Subtree Communications AB (Q4RJ7389LU)" och notariseras av Apple. Notariseringsbeviset häftas fast i appen (stapling), så Gatekeeper godkänner den även utan nätverk. CI kontrollerar vid varje bygge att Gatekeeper öppnar en nedladdad kopia, och bygget misslyckas annars. Den signerade appen laddas också upp som artefakten `Buddy` (sparas i 14 dagar).
+
+Taggar som `v0.1.0` publicerar en release med `Buddy.dmg` och `Buddy.zip`.
+
+### Signera med ett eget Apple Developer-konto
+
+I en fork signerar och notariserar CI appen med ditt eget konto när hemligheterna finns. Lägg in dem under repots Settings → Secrets and variables → Actions.
 
 **Certifikat.** Ett "Developer ID Application"-certifikat kan bara skapas av kontots Account Holder.
 
@@ -147,6 +158,27 @@ Med ett Apple Developer-konto signerar och notariserar CI appen automatiskt, så
 - På webben: öppna Nyckelhanterare (Keychain Access) → Certificate Assistant → Request a Certificate From a Certificate Authority, fyll i e-post och namn och välj "Saved to disk". Logga in som Account Holder på [developer.apple.com](https://developer.apple.com/account/resources/certificates/add), välj Developer ID Application och G2 Sub-CA, ladda upp filen och ladda ner certifikatet. Dubbelklicka på det, så hamnar det i nyckelringen tillsammans med nyckeln.
 
 Exportera sedan certifikatet med nyckel som .p12: Nyckelhanterare → My Certificates → högerklicka på "Developer ID Application: …" → Export. Står det "certificate is not trusted" saknar datorn Apples mellancertifikat [Developer ID - G2](https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer). Det spelar ingen roll för exporten, och CI installerar det själv.
+
+<details>
+<summary>Går det inte att välja .p12 vid exporten? Skapa nyckel och .p12 i Terminal i stället.</summary>
+
+Då ligger certifikatets privata nyckel inte i samma nyckelring. Skapa en ny nyckel och förfrågan:
+
+```sh
+mkdir -p ~/buddy-signing && cd ~/buddy-signing
+/usr/bin/openssl req -new -newkey rsa:2048 -nodes -keyout devid.key -out devid.csr -subj "/CN=Developer ID/C=SE"
+```
+
+Ladda upp `devid.csr` på developer.apple.com (Developer ID Application, G2 Sub-CA), spara certifikatet som `devid.cer` i samma mapp och kör:
+
+```sh
+/usr/bin/openssl x509 -inform DER -in devid.cer -out devid.pem
+/usr/bin/openssl pkcs12 -export -inkey devid.key -in devid.pem -out cert.p12 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES
+```
+
+Spara `cert.p12` och lösenordet säkert och radera mappen, eftersom den innehåller nyckeln okrypterad.
+
+</details>
 
 | Secret | Innehåll |
 |---|---|
@@ -163,4 +195,4 @@ Exportera sedan certifikatet med nyckel som .p12: Nyckelhanterare → My Certifi
 
 eller med ett Apple-ID: `APPLE_ID`, `APPLE_TEAM_ID` och `APPLE_APP_PASSWORD` (ett appspecifikt lösenord från appleid.apple.com).
 
-CI kontrollerar att Apple godtar notariseringsuppgifterna så snart de finns. När certifikatet också finns kontrollerar CI att Gatekeeper öppnar en nedladdad kopia, och bygget misslyckas annars. Taggar som `v0.1.0` publicerar en release med `Buddy.dmg` och `Buddy.zip`.
+CI kontrollerar att Apple godtar notariseringsuppgifterna så snart de finns. Utan certifikat blir appen bara ad hoc-signerad, och macOS stoppar nedladdade kopior ("Apple could not verify …"). De öppnas via Systeminställningar → Integritet och säkerhet → Öppna ändå, eller med `xattr -dr com.apple.quarantine /Applications/Buddy.app`.
