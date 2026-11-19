@@ -1338,6 +1338,8 @@ def write_report(ctx, results, out, mode, started):
     failed = sum(1 for r in results if r["status"] == "failed")
     covered = {}
     for result in results:
+        if result["status"] == "skipped":
+            continue  # a test that does not run in this mode covers nothing here
         for uc in result["useCases"]:
             covered.setdefault(uc, []).append(result)
     lines = ["# Buddy e2e (%s)" % mode, ""]
