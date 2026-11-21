@@ -2,31 +2,59 @@ import AVFoundation
 import SwiftUI
 import BuddyCore
 
+enum SettingsTab: String, CaseIterable, Identifiable {
+    case voice, ai, listening, avatar, shortcuts
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .voice: return "Röst"
+        case .ai: return "AI"
+        case .listening: return "Lyssna"
+        case .avatar: return "Avatar"
+        case .shortcuts: return "Kortkommandon"
+        }
+    }
+}
+
+/// The settings window. The pages are chosen with a segmented control at the top (not a
+/// tab view, which newer macOS versions move into the toolbar), and each page scrolls.
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        TabView {
-            VoiceSettingsTab(model: model, settings: settings)
-                .tabItem { Text("Röst") }
-            AISettingsTab(model: model, settings: settings)
-                .tabItem { Text("AI") }
-            ListeningSettingsTab(settings: settings)
-                .tabItem { Text("Lyssna") }
-            AvatarSettingsTab(model: model, settings: settings)
-                .tabItem { Text("Avatar") }
-            ShortcutsTab()
-                .tabItem { Text("Kortkommandon") }
+        VStack(spacing: 0) {
+            Picker("Inställningar", selection: $model.settingsTab) {
+                ForEach(SettingsTab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .padding(.vertical, 12)
+            Divider()
+            page
+                .formStyle(.grouped)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(16)
+    }
+
+    @ViewBuilder private var page: some View {
+        switch model.settingsTab {
+        case .voice: VoiceSettingsTab(model: model, settings: settings)
+        case .ai: AISettingsTab(model: model, settings: settings)
+        case .listening: ListeningSettingsTab(settings: settings)
+        case .avatar: AvatarSettingsTab(model: model, settings: settings)
+        case .shortcuts: ShortcutsTab()
+        }
     }
 }
 
 private struct VoiceSettingsTab: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
-    @State private var choosingVoice = false
 
     private var voiceLabel: String {
         if !settings.elevenLabsVoiceName.isEmpty { return settings.elevenLabsVoiceName }
@@ -74,7 +102,7 @@ private struct VoiceSettingsTab: View {
                     Text(voiceLabel)
                         .foregroundColor(.secondary)
                     Button("Välj röst…") {
-                        choosingVoice = true
+                        model.voicePickerOpen = true
                     }
                     .disabled(settings.elevenLabsKey.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -99,7 +127,7 @@ private struct VoiceSettingsTab: View {
                 .help("Renderar alla fasta repliker i förväg så att de spelas upp direkt och fungerar utan nätverk.")
             }
         }
-        .sheet(isPresented: $choosingVoice) {
+        .sheet(isPresented: $model.voicePickerOpen) {
             ElevenLabsVoicePicker(model: model, settings: settings)
         }
     }

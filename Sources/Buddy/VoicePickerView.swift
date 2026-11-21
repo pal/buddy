@@ -193,6 +193,11 @@ struct ElevenLabsVoicePicker: View {
             source = .mine
         }
         loading = false
+        EventLog.shared.record("voicePickerLoaded", [
+            "library": library.map(\.name),
+            "mine": mine.map(\.name),
+            "error": message.map { $0 as Any } ?? NSNull(),
+        ])
     }
 
     private func choose(_ voice: ElevenLabsAPI.Voice) {

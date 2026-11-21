@@ -74,6 +74,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var listening = false
     @Published private(set) var progressStamp = 0
     @Published private(set) var problem: String?
+    /// Selected page in the settings window, and whether the voice picker is open.
+    @Published var settingsTab: SettingsTab = .voice
+    @Published var voicePickerOpen = false
+    /// Opens the settings window (set by the window manager).
+    var showSettingsWindow: (() -> Void)?
 
     private var micWanted = false
     private var testing = false
@@ -563,6 +568,16 @@ final class AppModel: ObservableObject {
             testAvatar()
         case "prepare":
             prepareLines()
+        case "settings":
+            if let tab = command.value.flatMap(SettingsTab.init(rawValue:)) {
+                settingsTab = tab
+            }
+            showSettingsWindow?()
+            EventLog.shared.record("settingsShown", ["tab": settingsTab.rawValue])
+        case "voicePicker":
+            settingsTab = .voice
+            showSettingsWindow?()
+            voicePickerOpen = true
         case "elevenVoices":
             listElevenLabsVoicesForTest()
         case "elevenUseVoice":

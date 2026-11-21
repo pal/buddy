@@ -93,7 +93,9 @@ USE_CASES = {
     "UC15": "En svensk röst väljs ur ElevenLabs röstbibliotek",
     "UC16": "Fasta repliker förbereds med Eleven v4 och spelas direkt",
     "UC17": "Om ElevenLabs inte svarar pratar Buddy vidare med macOS-rösten",
+    "UC18": "Inställningarna får plats på skärmen, alla flikar går att nå och röstväljaren visar svenska röster",
 }
+SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts"]
 
 
 class TestFailure(Exception):
@@ -1312,7 +1314,43 @@ def test_eleven_fallback(ctx):
     buddy.wait_type("phase", 15, since, phase="listening")
 
 
-@test("T19", "Avslutas rent (ElevenLabs)", ["UC1"], modes=("inject",), quits=True)
+def check_window_on_screen(window):
+    frame, visible = window["frame"], window["visible"]
+    check(window.get("isVisible") and window.get("onActiveSpace"), "the window is not shown on the current space")
+    check(frame["w"] >= 600, "the window is only %.0f pt wide" % frame["w"])
+    check(frame["h"] <= visible["h"] + 1, "the window is taller than the screen (%.0f > %.0f pt)" % (frame["h"], visible["h"]))
+    inside = (frame["x"] >= visible["x"] - 1 and frame["x"] + frame["w"] <= visible["x"] + visible["w"] + 1 and
+              frame["y"] >= visible["y"] - 1 and frame["y"] + frame["h"] <= visible["y"] + visible["h"] + 1)
+    check(inside, "the window %s is outside the visible screen %s" % (frame, visible))
+
+
+@test("T19", "Inställningarna får plats på skärmen; alla flikar och röstväljaren visas", ["UC18"], modes=("inject",))
+def test_settings_window(ctx):
+    start_elevenlabs_buddy(ctx)
+    buddy = ctx.buddy
+    buddy.ensure_listening()
+    window = None
+    for tab in SETTINGS_TABS:
+        since = buddy.mark()
+        buddy.command("settings", tab)
+        buddy.wait_type("settingsShown", 10, since, tab=tab)
+        window = buddy.wait_type("window", 10, since, id="settings")
+        check_window_on_screen(window)
+        time.sleep(1.0)
+        screenshot(ctx.out / ("settings-%s.png" % tab))
+    since = buddy.mark()
+    buddy.command("voicePicker")
+    loaded = buddy.wait_type("voicePickerLoaded", 20, since)
+    check(not loaded.get("error"), "the voice picker could not load voices: %s" % loaded.get("error"))
+    check(loaded.get("library") == [v["name"] for v in ctx.eleven.library], "voice picker shows %s" % loaded.get("library"))
+    time.sleep(1.5)
+    screenshot(ctx.out / "settings-voice-picker.png")
+    frame, visible = window["frame"], window["visible"]
+    ctx.note("Inställningsfönstret: %.0f × %.0f pt på en skärmyta av %.0f × %.0f pt" % (
+        frame["w"], frame["h"], visible["w"], visible["h"]))
+
+
+@test("T20", "Avslutas rent (ElevenLabs)", ["UC1"], modes=("inject",), quits=True)
 def test_quit_elevenlabs(ctx):
     start_elevenlabs_buddy(ctx)
     test_quit(ctx)
