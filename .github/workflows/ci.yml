@@ -2,16 +2,26 @@ name: CI
 
 # One macOS job: build, unit tests, signing and notarization (when the Developer ID
 # secrets exist), distribution check, then end-to-end tests of the same app bundle.
+# On main, a run where everything passes publishes the tested Buddy.zip as a new
+# release (the next patch version after the latest vX.Y.Z tag).
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
+# Runs on main wait for each other, so every release gets its own version number.
+# Newer pushes to a pull request cancel the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build-and-test:
     runs-on: macos-15
     timeout-minutes: 50
+    permissions:
+      contents: write
     env:
       # Signing and notarization run when the Developer ID secrets exist (see README).
       HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
@@ -19,6 +29,28 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # The version this build gets: the tag already on this commit, or the next patch
+      # version after the latest vX.Y.Z tag (0.1.0 if there is none).
+      - name: Version
+        run: |
+          existing=$(git tag --points-at HEAD --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          if [ -n "$existing" ]; then
+            version="${existing#v}"
+            echo "ALREADY_RELEASED=true" >> "$GITHUB_ENV"
+          else
+            latest=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+            if [ -z "$latest" ]; then
+              version=0.1.0
+            else
+              IFS=. read -r major minor patch <<< "${latest#v}"
+              version="$major.$minor.$((patch + 1))"
+            fi
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "Version: $version"
 
       - name: Toolchain
         run: |
@@ -102,3 +134,22 @@ jobs:
           name: e2e-results
           path: build/e2e
           retention-days: 14
+
+      # Only after every step above has passed, and only with a signed and notarized app.
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_SIGNING == 'true' && env.ALREADY_RELEASED != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" build/Buddy.zip \
+            --target "$GITHUB_SHA" \
+            --title "Buddy $VERSION" \
+            --generate-notes \
+            --notes "Ladda ner Buddy.zip, packa upp den och flytta Buddy till Program. Appen är signerad med Developer ID (Subtree Communications AB) och notariserad av Apple."
+
+      - name: Release that would be published
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        run: |
+          echo "On main this run would publish v$VERSION with build/Buddy.zip ($(du -h build/Buddy.zip | cut -f1))"
+          ditto -x -k build/Buddy.zip "$RUNNER_TEMP/release-check"
+          defaults read "$RUNNER_TEMP/release-check/Buddy.app/Contents/Info" CFBundleShortVersionString
