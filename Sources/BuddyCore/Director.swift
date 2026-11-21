@@ -65,14 +65,23 @@ public struct DirectorSettings: Equatable, Sendable {
     public var maxVoiceWait: TimeInterval = 2.0
     /// Extra wait when the speaker stops in the middle of an end phrase ("tack …").
     public var endPhraseGrace: TimeInterval = 1.5
+    /// Whether the voice performs audio tags such as [laughs], so Claude may use them.
+    public var audioTags = false
 
     public init() {}
+}
+
+/// Where a sentence comes from. Fixed lines (scripted lines, farewells, fallback lines) can be
+/// rendered ahead of time.
+public enum SpeechKind: String, Sendable {
+    case live
+    case fixed
 }
 
 /// Speech output as seen by the director. `isBusy` must be true from `enqueue` until playback ends.
 @MainActor
 public protocol VoiceOutput: AnyObject {
-    func enqueue(_ sentence: String)
+    func enqueue(_ sentence: String, kind: SpeechKind)
     func stopSpeaking()
     var isBusy: Bool { get }
 }
@@ -513,7 +522,7 @@ public final class Director {
             : PromptBuilder.followUp(utterance: said, turn: turn, maxTurns: limit)
         conversation.appendUser(userText)
         let request = ReplyRequest(
-            system: PromptBuilder.system(session: session, moment: moment),
+            system: PromptBuilder.system(session: session, moment: moment, audioTags: settings.audioTags),
             messages: conversation.messages
         )
 
@@ -570,7 +579,7 @@ public final class Director {
         if capped, spokenText.count >= settings.maxSpokenCharacters { return }
         spokenText = join(spokenText, sentence)
         if phase != .speaking { setPhase(.speaking) }
-        voice.enqueue(sentence)
+        voice.enqueue(sentence, kind: capped ? .live : .fixed)
     }
 
     private func speakFixed(_ text: String) {
@@ -633,7 +642,7 @@ public final class Director {
         let lines = moment.farewells.isEmpty ? session.farewells : moment.farewells
         if farewell, let line = lines.randomElement() {
             setPhase(.closing)
-            for sentence in SentenceSplitter.split(line) { voice.enqueue(sentence) }
+            for sentence in SentenceSplitter.split(line) { voice.enqueue(sentence, kind: .fixed) }
             emit(.buddySaid(line))
         } else {
             finishMoment()

@@ -14,6 +14,8 @@ struct LaunchOptions {
     let claudeURL: URL?
     /// API key used instead of the Keychain (BUDDY_ANTHROPIC_KEY).
     let anthropicKey: String?
+    /// ElevenLabs API base URL, e.g. a local mock server (BUDDY_ELEVENLABS_URL).
+    let elevenLabsURL: URL?
     /// JSON Lines file where Buddy records what it does (BUDDY_EVENT_LOG).
     let eventLog: URL?
     /// File with test input, one JSON object per line: {"say": "..."} or {"command": "..."}.
@@ -33,6 +35,7 @@ struct LaunchOptions {
         sessionFile = url("BUDDY_SESSION_FILE")
         claudeURL = url("BUDDY_CLAUDE_URL")
         anthropicKey = environment["BUDDY_ANTHROPIC_KEY"]
+        elevenLabsURL = url("BUDDY_ELEVENLABS_URL")
         eventLog = url("BUDDY_EVENT_LOG")
         inbox = url("BUDDY_INBOX")
         commands = url("BUDDY_COMMANDS")

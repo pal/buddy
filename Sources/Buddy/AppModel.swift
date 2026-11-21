@@ -74,9 +74,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var listening = false
     @Published private(set) var progressStamp = 0
     @Published private(set) var problem: String?
+    /// Selected page in the settings window, and whether the voice picker is open.
+    @Published var settingsTab: SettingsTab = .voice
+    @Published var voicePickerOpen = false
+    /// Opens the settings window (set by the window manager).
+    var showSettingsWindow: (() -> Void)?
 
     private var micWanted = false
     private var testing = false
+    /// Voice Library voices from the latest listing (used by the end-to-end test commands).
+    private var lastLibraryVoices: [ElevenLabsAPI.Voice] = []
     private var cancellables: Set<AnyCancellable> = []
     private var tickTask: Task<Void, Never>?
     private let options = LaunchOptions.current
@@ -207,7 +214,9 @@ final class AppModel: ObservableObject {
             language: settings.recognitionLocale,
             elevenKey: settings.elevenLabsKey,
             elevenVoiceID: settings.elevenLabsVoiceID,
-            elevenModel: settings.elevenLabsModel
+            elevenModel: settings.elevenLabsModel,
+            elevenAudioTags: settings.elevenLabsAudioTags,
+            elevenPreparedQuality: settings.elevenLabsPreparedQuality
         )
     }
 
@@ -341,7 +350,7 @@ final class AppModel: ObservableObject {
         guard !phase.isActive, !testing else { return }
         testing = true
         updateAvatar()
-        player.enqueue("Hej! Jag är \(activeSession.buddyName). Syns jag och hörs jag?")
+        player.enqueue("Hej! Jag är \(activeSession.buddyName). Syns jag och hörs jag?", kind: .live)
         Task { @MainActor [weak self] in
             for _ in 0..<300 {
                 try? await Task.sleep(nanoseconds: 200_000_000)
@@ -390,6 +399,83 @@ final class AppModel: ObservableObject {
             var message = "Klart: \(result.rendered) ljudfiler förberedda"
             if result.failed > 0 { message += ", \(result.failed) kunde inte förberedas (spelas upp direkt)" }
             self.addLog(message)
+            EventLog.shared.record("prepared", ["rendered": result.rendered, "failed": result.failed])
+        }
+    }
+
+    /// Quits Buddy. An open sheet, such as the voice picker, would otherwise stop macOS
+    /// from quitting the app, so sheets are closed first.
+    func quit() {
+        voicePickerOpen = false
+        var closedSheet = false
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+                closedSheet = true
+            }
+        }
+        guard closedSheet else {
+            NSApp.terminate(nil)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+        }
+    }
+
+    // MARK: - ElevenLabs voices
+
+    private var elevenLabsClient: ElevenLabsClient { ElevenLabsClient(apiKey: settings.elevenLabsKey) }
+
+    /// Voices in the ElevenLabs Voice Library for the presentation language.
+    func elevenLabsLibraryVoices() async throws -> [ElevenLabsAPI.Voice] {
+        let voices = try await elevenLabsClient.libraryVoices(language: ElevenLabsAPI.languageCode(locale: settings.recognitionLocale))
+        lastLibraryVoices = voices
+        return voices
+    }
+
+    func elevenLabsMyVoices() async throws -> [ElevenLabsAPI.Voice] {
+        try await elevenLabsClient.myVoices()
+    }
+
+    /// Makes a voice Buddy's voice. Library voices are added to "My voices" first.
+    func useElevenLabsVoice(_ voice: ElevenLabsAPI.Voice, fromLibrary: Bool) async throws {
+        var id = voice.id
+        if fromLibrary {
+            id = try await elevenLabsClient.addLibraryVoice(voice)
+        }
+        settings.elevenLabsVoiceID = id
+        settings.elevenLabsVoiceName = voice.name
+        addLog("Röst för Buddy: \(voice.name)")
+        EventLog.shared.record("elevenLabsVoiceSelected", ["voiceID": id, "name": voice.name, "fromLibrary": fromLibrary])
+    }
+
+    private func listElevenLabsVoicesForTest() {
+        Task { @MainActor in
+            var fields: [String: Any] = [:]
+            do {
+                let library = try await self.elevenLabsLibraryVoices()
+                fields["library"] = library.map(\.name)
+                fields["libraryIDs"] = library.map(\.id)
+                fields["mine"] = try await self.elevenLabsMyVoices().map(\.name)
+            } catch {
+                fields["error"] = error.localizedDescription
+            }
+            EventLog.shared.record("elevenLabsVoices", fields)
+        }
+    }
+
+    private func useLibraryVoiceForTest(id: String) {
+        Task { @MainActor in
+            guard let voice = self.lastLibraryVoices.first(where: { $0.id == id }) else {
+                EventLog.shared.record("error", ["message": "no library voice \(id)"])
+                return
+            }
+            do {
+                try await self.useElevenLabsVoice(voice, fromLibrary: true)
+            } catch {
+                EventLog.shared.record("error", ["message": error.localizedDescription])
+            }
         }
     }
 
@@ -500,10 +586,26 @@ final class AppModel: ObservableObject {
             queueMoment(moment?.id)
         case "testAvatar":
             testAvatar()
+        case "prepare":
+            prepareLines()
+        case "settings":
+            if let tab = command.value.flatMap(SettingsTab.init(rawValue:)) {
+                settingsTab = tab
+            }
+            showSettingsWindow?()
+            EventLog.shared.record("settingsShown", ["tab": settingsTab.rawValue])
+        case "voicePicker":
+            settingsTab = .voice
+            showSettingsWindow?()
+            voicePickerOpen = true
+        case "elevenVoices":
+            listElevenLabsVoicesForTest()
+        case "elevenUseVoice":
+            useLibraryVoiceForTest(id: command.value ?? "")
         case "snapshot":
             snapshotRobot(name: command.value ?? "snapshot")
         case "quit":
-            NSApp.terminate(nil)
+            quit()
         default:
             EventLog.shared.record("error", ["message": "unknown command \(command.name)"])
         }

@@ -2,7 +2,7 @@ import Foundation
 
 /// Builds the system prompt and user turns sent to Claude.
 public enum PromptBuilder {
-    public static func system(session: Session, moment: Moment) -> String {
+    public static func system(session: Session, moment: Moment, audioTags: Bool = false) -> String {
         var parts: [String] = []
         let persona = session.persona.trimmingCharacters(in: .whitespacesAndNewlines)
         parts.append(persona.isEmpty ? Session.defaultPersona : persona)
@@ -12,7 +12,7 @@ public enum PromptBuilder {
             parts.append("## Om presentationen\n\(context)")
         }
 
-        parts.append("""
+        var rules = """
         ## Så fungerar det
         - Du heter \(session.buddyName) och syns som en liten animerad robot i hörnet av skärmen medan talaren presenterar. Det du skriver läses upp med talsyntes för publiken.
         - Talarens repliker kommer från automatisk taligenkänning och kan innehålla felhörda ord. Tolka dem välvilligt utifrån sammanhanget.
@@ -21,7 +21,17 @@ public enum PromptBuilder {
         - Håll svaren korta och lätta att säga: högst cirka \(session.maxWordsPerReply) ord, gärna en till tre meningar.
         - Var rolig och personlig men respektfull mot talaren och publiken.
         - Hitta inte på fakta om talaren, publiken eller företag.
-        """)
+        """
+        if audioTags {
+            let tags = AudioTags.allowed.map { "[\($0)]" }.joined(separator: ", ")
+            rules += """
+
+            - Rösten kan uttrycka känslor med ljudtaggar på engelska inom hakparentes. Använd högst två per svar, \
+            bara där det passar, och bara de här: \(tags). Sätt taggen direkt före orden den gäller, till exempel \
+            "[laughs] Där fick du mig!". Skriv aldrig något annat inom hakparentes.
+            """
+        }
+        parts.append(rules)
 
         var momentPart = "## Det här momentet: \(moment.title)"
         let script = moment.script.trimmingCharacters(in: .whitespacesAndNewlines)

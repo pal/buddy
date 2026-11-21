@@ -90,9 +90,9 @@ final class StatusBarController: NSObject {
         add(menu, "Redigera presentationer…", #selector(showEditor))
         add(menu, "Inställningar…", #selector(showSettings))
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Avsluta Buddy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        quit.target = NSApp
-        menu.addItem(quit)
+        let quitItem = NSMenuItem(title: "Avsluta Buddy", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
         return menu
     }
 
@@ -164,6 +164,7 @@ final class StatusBarController: NSObject {
     @objc private func showEditor() { windows.showEditor() }
     @objc private func showSettings() { windows.showSettings() }
     @objc private func showControlPanel() { windows.showControlPanel() }
+    @objc private func quit() { model.quit() }
 
     @objc private func selectSession(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let id = UUID(uuidString: raw) else { return }

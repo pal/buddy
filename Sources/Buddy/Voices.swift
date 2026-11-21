@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import BuddyCore
 
 enum SpeechError: LocalizedError {
     case empty
@@ -24,7 +25,16 @@ struct VoiceConfig: Equatable {
     var language = "sv-SE"
     var elevenKey = ""
     var elevenVoiceID = ""
-    var elevenModel = "eleven_flash_v2_5"
+    var elevenModel = ElevenLabsAPI.defaultModel
+    /// Let v3/v4 models perform audio tags such as [laughs].
+    var elevenAudioTags = true
+    /// Render fixed lines with the best model (Eleven v4) when preparing them.
+    var elevenPreparedQuality = true
+
+    /// Whether audio tags are performed rather than removed.
+    var speaksAudioTags: Bool {
+        provider == .elevenLabs && elevenAudioTags && ElevenLabsAPI.supportsAudioTags(elevenModel)
+    }
 }
 
 /// Collects AVSpeechSynthesizer output buffers into an audio file.
@@ -262,46 +272,5 @@ final class SystemVoice: NSObject, AVSpeechSynthesizerDelegate {
                 writer.finish()
             }
         }
-    }
-}
-
-/// ElevenLabs text-to-speech (https://elevenlabs.io). Returns MP3 audio.
-struct ElevenLabsVoice {
-    let apiKey: String
-    let voiceID: String
-    let modelID: String
-    let languageCode: String
-
-    func render(_ text: String, to url: URL) async throws {
-        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let voice = voiceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { throw SpeechError.setup("ElevenLabs-nyckel saknas (Inställningar → Röst)") }
-        guard !voice.isEmpty,
-              let encoded = voice.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              var components = URLComponents(string: "https://api.elevenlabs.io/v1/text-to-speech/\(encoded)")
-        else { throw SpeechError.setup("Ange ett röst-id för ElevenLabs (Inställningar → Röst)") }
-        components.queryItems = [URLQueryItem(name: "output_format", value: "mp3_44100_128")]
-        guard let endpoint = components.url else { throw SpeechError.setup("Ogiltigt röst-id") }
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 20
-        request.setValue(key, forHTTPHeaderField: "xi-api-key")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
-        var body: [String: Any] = ["text": text, "model_id": modelID]
-        // Only the v2.5 models accept a forced language.
-        if modelID.contains("v2_5"), !languageCode.isEmpty {
-            body["language_code"] = languageCode
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200, !data.isEmpty else {
-            let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
-            throw SpeechError.http("ElevenLabs svarade \(status): \(detail)")
-        }
-        try data.write(to: url, options: .atomic)
     }
 }
