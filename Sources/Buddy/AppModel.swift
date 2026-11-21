@@ -403,6 +403,26 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Quits Buddy. An open sheet, such as the voice picker, would otherwise stop macOS
+    /// from quitting the app, so sheets are closed first.
+    func quit() {
+        voicePickerOpen = false
+        var closedSheet = false
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+                closedSheet = true
+            }
+        }
+        guard closedSheet else {
+            NSApp.terminate(nil)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+        }
+    }
+
     // MARK: - ElevenLabs voices
 
     private var elevenLabsClient: ElevenLabsClient { ElevenLabsClient(apiKey: settings.elevenLabsKey) }
@@ -585,7 +605,7 @@ final class AppModel: ObservableObject {
         case "snapshot":
             snapshotRobot(name: command.value ?? "snapshot")
         case "quit":
-            NSApp.terminate(nil)
+            quit()
         default:
             EventLog.shared.record("error", ["message": "unknown command \(command.name)"])
         }

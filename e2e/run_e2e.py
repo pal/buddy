@@ -414,7 +414,8 @@ class MockElevenLabs:
         with self.render_lock:
             if not path.exists():
                 voice = ["-v", self.voice] if self.voice else []
-                run(["say"] + voice + ["-o", str(path), "--file-format=WAVE", "--data-format=LEI16@22050", clean])
+                run(["say"] + voice + ["-o", str(path), "--file-format=WAVE", "--data-format=LEI16@22050", clean],
+                    timeout=60)
         return path.read_bytes()
 
     def _handler(self):
@@ -534,8 +535,8 @@ class MockElevenLabs:
 # Helpers that run on the Mac
 
 
-def run(args, check_result=True, capture=True):
-    return subprocess.run(args, check=check_result, capture_output=capture, text=True)
+def run(args, check_result=True, capture=True, timeout=None):
+    return subprocess.run(args, check=check_result, capture_output=capture, text=True, timeout=timeout)
 
 
 def build_tools(folder):
@@ -560,17 +561,21 @@ def swedish_voice():
 
 
 def window_list(tools):
-    return json.loads(run([str(tools["Probe"]), "windows"]).stdout)
+    return json.loads(run([str(tools["Probe"]), "windows"], timeout=30).stdout)
 
 
 def region_stats(tools, png, screen_width, rect, color=SLIDE_COLOR):
     x, y, w, h = rect
     args = [str(tools["Probe"]), "region", str(png), str(screen_width)] + [str(v) for v in (x, y, w, h)] + [str(c) for c in color]
-    return json.loads(run(args).stdout)
+    return json.loads(run(args, timeout=30).stdout)
 
 
 def screenshot(path):
-    run(["screencapture", "-x", "-t", "png", str(path)], check_result=False)
+    try:
+        run(["screencapture", "-x", "-t", "png", str(path)], check_result=False, timeout=20)
+    except subprocess.TimeoutExpired:
+        print("screencapture did not finish within 20 s: %s" % path, flush=True)
+        return None
     return path if Path(path).exists() else None
 
 
@@ -718,7 +723,10 @@ class Buddy:
         if self.mode == "audio":
             self.wait_input_ready()
             time.sleep(0.6)
-            run(["say", "-v", self.voice, "-a", self.device, "-r", "165", text])
+            try:
+                run(["say", "-v", self.voice, "-a", self.device, "-r", "165", text], timeout=60)
+            except subprocess.TimeoutExpired:
+                raise TestFailure("say did not finish speaking %r within 60 s" % text)
         else:
             self.append(self.inbox, {"say": text, "wordDelay": 0.12})
 
@@ -1501,7 +1509,13 @@ def main():
     finally:
         current = ctx.buddy
         if current.alive() and current.pid:
+            # A Buddy left running would disturb the next run on the same machine.
             subprocess.run(["kill", str(current.pid)], capture_output=True)
+            deadline = time.time() + 5
+            while time.time() < deadline and current.alive():
+                time.sleep(0.2)
+            if current.alive():
+                subprocess.run(["kill", "-9", str(current.pid)], capture_output=True)
         stub.terminate()
         mock.stop()
         eleven.stop()
