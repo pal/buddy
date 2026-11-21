@@ -19,7 +19,7 @@ En liten AI-robot som sitter i hörnet av skärmen när du presenterar. Buddy ly
 
 ## Installera
 
-**Ladda ner:** hämta `Buddy.dmg` från [Releases](../../releases), öppna den och dra Buddy till Program. Appen är signerad med Developer ID-certifikatet "Developer ID Application: Subtree Communications AB (Q4RJ7389LU)" och notariserad av Apple, så macOS öppnar den utan att blockera den. Första gången frågar macOS bara om du vill öppna en app som hämtats från internet.
+**Ladda ner:** hämta `Buddy.zip` från den senaste versionen under [Releases](../../releases), packa upp den och flytta Buddy till Program. Appen är signerad med Developer ID-certifikatet "Developer ID Application: Subtree Communications AB (Q4RJ7389LU)" och notariserad av Apple, så macOS öppnar den utan att blockera den. Första gången frågar macOS bara om du vill öppna en app som hämtats från internet.
 
 Så kontrollerar du signaturen:
 
@@ -156,7 +156,9 @@ Projektet är ett Swift-paket:
 
 Alla byggen från CI och Releases signeras med "Developer ID Application: Subtree Communications AB (Q4RJ7389LU)" och notariseras av Apple. Notariseringsbeviset häftas fast i appen (stapling), så Gatekeeper godkänner den även utan nätverk. CI kontrollerar vid varje bygge att Gatekeeper öppnar en nedladdad kopia, och bygget misslyckas annars. Den signerade appen laddas också upp som artefakten `Buddy` (sparas i 14 dagar).
 
-Taggar som `v0.1.0` publicerar en release med `Buddy.dmg` och `Buddy.zip`.
+### Nya versioner
+
+Varje sammanslagning till `main` där bygget och alla tester går igenom publicerar automatiskt en ny version under Releases, med den testade, signerade och notariserade appen som `Buddy.zip`. Versionsnumret räknas upp från den senaste taggen: v0.1.0, v0.1.1, v0.1.2 och så vidare. Vill du höja huvud- eller delversionen taggar du en commit på `main` själv, till exempel `git tag v0.2.0 && git push origin v0.2.0`; nästa version blir då v0.2.1.
 
 ### Signera med ett eget Apple Developer-konto
 
