@@ -675,6 +675,13 @@ class Buddy:
                 if predicate(event):
                     return event
             if self.pid and not self.alive():
+                # The event may have been written just before Buddy quit: read once more.
+                self.read()
+                while index < len(self.events):
+                    event = self.events[index]
+                    index += 1
+                    if predicate(event):
+                        return event
                 raise TestFailure("Buddy quit unexpectedly while waiting for %s" % what)
             time.sleep(0.1)
         recent = "; ".join(describe(e) for e in self.events[-8:])
