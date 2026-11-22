@@ -24,6 +24,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeys: HotKeyCenter?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A copy started from Downloads first offers to move itself to the Applications folder.
+        AppMover.offerIfNeeded { [weak self] moving in
+            if !moving {
+                self?.start()
+            }
+        }
+    }
+
+    private func start() {
         let model = AppModel()
         let windows = WindowManager(model: model)
         self.model = model

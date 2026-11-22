@@ -19,7 +19,9 @@ En liten AI-robot som sitter i hörnet av skärmen när du presenterar. Buddy ly
 
 ## Installera
 
-**Ladda ner:** hämta `Buddy.zip` från den senaste versionen under [Releases](../../releases), packa upp den och flytta Buddy till Program. Appen är signerad med Developer ID-certifikatet "Developer ID Application: Subtree Communications AB (Q4RJ7389LU)" och notariserad av Apple, så macOS öppnar den utan att blockera den. Första gången frågar macOS bara om du vill öppna en app som hämtats från internet.
+**Ladda ner:** hämta `Buddy.zip` från den senaste versionen under [Releases](../../releases), packa upp den och öppna Buddy. Ligger Buddy inte i Program frågar den om den ska flytta dit sig själv. Där heter den alltid Buddy, även om kopian i Hämtade filer heter "Buddy 3", och en äldre Buddy ersätts. Kopian i Hämtade filer läggs i papperskorgen. Finns redan en nyare Buddy i Program öppnas den i stället. Du kan också välja "Inte nu" eller "Fråga inte igen", och flytta senare under Inställningar → Uppdateringar.
+
+Appen är signerad med Developer ID-certifikatet "Developer ID Application: Subtree Communications AB (Q4RJ7389LU)" och notariserad av Apple, så macOS öppnar den utan att blockera den. Första gången frågar macOS bara om du vill öppna en app som hämtats från internet.
 
 Så kontrollerar du signaturen:
 
@@ -62,7 +64,7 @@ Modellerna Eleven v4 (högst kvalitet men långsammare) och Flash v2.5 (snabbast
 
 Buddy uppdaterar sig själv. En gång om dygnet frågar Buddy GitHub efter den senaste versionen. En ny version laddas ner och kontrolleras innan den används: den måste vara signerad av samma Developer ID (Subtree Communications AB) och notariserad av Apple. Den installeras när Buddy inte har använts på 20 minuter, eller när du avslutar Buddy, och aldrig mitt i en dialog eller medan ett av Buddys fönster är öppet. Sedan startar Buddy om.
 
-Under Inställningar → Uppdateringar kan du stänga av automatiska uppdateringar, söka efter en ny version direkt och installera en nedladdad version på en gång. Automatiska uppdateringar kräver att Buddy ligger i en mapp du får ändra i, till exempel Program. En kopia du byggt själv uppdateras inte.
+Under Inställningar → Uppdateringar kan du stänga av automatiska uppdateringar, söka efter en ny version direkt och installera en nedladdad version på en gång. Automatiska uppdateringar kräver att Buddy ligger i en mapp du får ändra i, till exempel Program. Ligger Buddy någon annanstans finns knappen **Flytta till Program…** där. En kopia du byggt själv uppdateras inte.
 
 ## Så fungerar en dialog
 
@@ -138,7 +140,7 @@ make e2e        # hela appen, end-to-end, med inmatade repliker
 make e2e-audio  # hela appen med riktigt tal genom en virtuell mikrofon
 ```
 
-E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Sedan startas appen igen med ElevenLabs mot en låtsasserver som kontrollerar varje anrop och svarar med riktigt svenskt tal: en svensk röst väljs ur röstbiblioteket, Eleven v4 Turbo med ljudtaggar, fasta repliker förberedda med Eleven v4 och reserv till macOS-rösten. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude och ElevenLabs.
+E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Sedan startas appen igen med ElevenLabs mot en låtsasserver som kontrollerar varje anrop och svarar med riktigt svenskt tal: en svensk röst väljs ur röstbiblioteket, Eleven v4 Turbo med ljudtaggar, fasta repliker förberedda med Eleven v4 och reserv till macOS-rösten. Till sist kontrolleras att Buddy uppdaterar sig själv till en ny signerad version, och att en kopia som startas från Hämtade filer flyttar sig till Program som Buddy.app och startar om därifrån. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude och ElevenLabs.
 
 `make e2e-audio` kräver den virtuella ljudenheten [BlackHole](https://github.com/ExistentialAudio/BlackHole) som standard för in- och utljud, och en svensk röst. I GitHub Actions körs båda varianterna vid varje push, i samma jobb som bygger appen, och `e2e/setup-ci.sh` förbereder maskinen. Resultat, skärmdumpar och loggar laddas upp som artefakten `e2e-results`. Finns repository-hemligheten `ANTHROPIC_API_KEY` körs dessutom ett test mot det riktiga Claude API:t.
 

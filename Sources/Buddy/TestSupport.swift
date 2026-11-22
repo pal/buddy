@@ -18,6 +18,9 @@ struct LaunchOptions {
     let elevenLabsURL: URL?
     /// Where Buddy looks for new releases instead of GitHub (BUDDY_UPDATE_FEED).
     let updateFeedURL: URL?
+    /// Folder that stands in for /Applications, so the tests can check that Buddy moves itself
+    /// there (BUDDY_APPLICATIONS_DIR). Buddy only offers to move while testing if this is set.
+    let applicationsFolder: URL?
     /// JSON Lines file where Buddy records what it does (BUDDY_EVENT_LOG).
     let eventLog: URL?
     /// File with test input, one JSON object per line: {"say": "..."} or {"command": "..."}.
@@ -39,6 +42,7 @@ struct LaunchOptions {
         anthropicKey = environment["BUDDY_ANTHROPIC_KEY"]
         elevenLabsURL = url("BUDDY_ELEVENLABS_URL")
         updateFeedURL = url("BUDDY_UPDATE_FEED")
+        applicationsFolder = url("BUDDY_APPLICATIONS_DIR")
         eventLog = url("BUDDY_EVENT_LOG")
         inbox = url("BUDDY_INBOX")
         commands = url("BUDDY_COMMANDS")

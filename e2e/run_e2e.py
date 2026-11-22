@@ -9,7 +9,8 @@ when Claude fails, and that Buddy does not hear itself. A second run of the app
 uses ElevenLabs (local mock server that validates every request and answers with
 real Swedish speech): choosing a Swedish voice from the Voice Library, Eleven v4
 Turbo with audio tags, fixed lines prepared with Eleven v4, and the fallback to
-the macOS voice.
+the macOS voice. Further runs check that Buddy updates itself, and that a copy
+started from Downloads moves itself to the Applications folder as Buddy.app.
 
 Modes:
   inject  Sentences are delivered to Buddy as recognized text. No microphone.
@@ -96,6 +97,8 @@ USE_CASES = {
     "UC17": "Om ElevenLabs inte svarar pratar Buddy vidare med macOS-rösten",
     "UC18": "Inställningarna får plats på skärmen, alla flikar går att nå och röstväljaren visar svenska röster",
     "UC19": "Buddy uppdaterar sig själv till en ny signerad och notariserad version och startar om",
+    "UC20": "Startas Buddy från Hämtade filer flyttar den sig till Program som Buddy.app, ersätter den gamla och startar om därifrån",
+    "UC21": "Finns en nyare Buddy i Program öppnas den i stället för den nedladdade kopian",
 }
 SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts", "updates"]
 UPDATE_ZIP = ROOT / "build" / "update" / "Buddy.zip"
@@ -1518,6 +1521,150 @@ def test_auto_update(ctx):
     finally:
         releases.stop()
         (ctx.out / "release-requests.json").write_text(json.dumps(releases.requests, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Moving a downloaded copy to the Applications folder (a stand-in folder for the tests)
+
+
+def move_folders(ctx, name):
+    base = ctx.out / name
+    downloads, applications = base / "Downloads", base / "Applications"
+    for folder in (downloads, applications):
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True)
+    return base, downloads, applications
+
+
+def quarantined_files(app):
+    result = run(["xattr", "-lr", str(app)], check_result=False, timeout=30)
+    return [line for line in result.stdout.splitlines() if "com.apple.quarantine" in line]
+
+
+def stop(buddy):
+    if buddy.pid and buddy.alive():
+        subprocess.run(["kill", str(buddy.pid)], capture_output=True)
+        deadline = time.time() + 5
+        while time.time() < deadline and buddy.alive():
+            time.sleep(0.2)
+        if buddy.alive():
+            subprocess.run(["kill", "-9", str(buddy.pid)], capture_output=True)
+
+
+@test("T22", "Flyttar sig från Hämtade filer till Program som Buddy.app, ersätter den gamla och startar om", ["UC20"],
+      modes=("inject",), quits=True)
+def test_move_to_applications(ctx):
+    base, downloads, applications = move_folders(ctx, "move")
+    source = Path(ctx.args.app).resolve()
+    installed = applications / "Buddy.app"
+    downloaded = downloads / "Buddy 3.app"
+    run(["ditto", str(source), str(installed)], timeout=60)
+    run(["ditto", str(source), str(downloaded)], timeout=60)
+    # A file inside the download carries the quarantine flag a browser sets. Not the app itself:
+    # macOS would then ask whether to open it, and nobody can answer that here.
+    icon = downloaded / "Contents" / "Resources" / "AppIcon.icns"
+    run(["xattr", "-w", "com.apple.quarantine", "0081;%x;Safari;" % int(time.time()), str(icon)], timeout=30)
+    check(quarantined_files(downloaded), "could not set the quarantine flag on the download")
+    old_inode = installed.stat().st_ino
+    extra = {"BUDDY_APPLICATIONS_DIR": str(applications)}
+    old = Buddy(ctx.args, base / "old", ctx.mock.url, ctx.buddy.voice, extra, app=installed)
+    new = Buddy(ctx.args, base / "new", ctx.mock.url, ctx.buddy.voice,
+                dict(extra, BUDDY_SET_moveToApplications="confirm"), app=downloaded)
+    began = time.time()
+    try:
+        old.launch()
+        started = old.wait_type("launch", 40)
+        old.pid = started.get("pid")
+        check(not old.find_all("movePrompt"), "the Buddy in Program offered to move itself")
+        ctx.buddy = new
+        new.launch()
+        prompt = new.wait_type("movePrompt", 40)
+        new.pid = prompt.get("pid")
+        time.sleep(1.0)
+        screenshot(ctx.out / "move-prompt.png")
+        check(prompt.get("plan") == "install", "plan: %s" % prompt.get("plan"))
+        check(prompt.get("from") == str(downloaded), "moves %s" % prompt.get("from"))
+        check(prompt.get("to") == str(installed), "moves to %s" % prompt.get("to"))
+        check(prompt.get("title") == "Flytta Buddy till mappen Program?", "title: %s" % prompt.get("title"))
+        message = prompt.get("message", "")
+        for sentence in ("Där heter appen bara Buddy och kan uppdatera sig själv.",
+                         "Version %s som redan finns där ersätts." % prompt.get("version"),
+                         "Buddy som är igång avslutas först.",
+                         "Den här kopian läggs i papperskorgen."):
+            check(sentence in message, "the question does not say %r: %s" % (sentence, message))
+        check(prompt.get("buttons") == ["Flytta till Program", "Inte nu"], "buttons: %s" % prompt.get("buttons"))
+        check(old.pid in (prompt.get("running") or []), "running Buddy: %s, old Buddy: %s" % (prompt.get("running"), old.pid))
+        moved = new.wait_type("moveToApplications", 40)
+        check(moved.get("replaced") is True, "the old Buddy was not replaced: %s" % moved)
+        check(moved.get("trashed") is True, "the download was not moved to the Trash: %s" % moved)
+        check((moved.get("quitOthers") or 0) >= 1, "the running Buddy was not quit: %s" % moved)
+        check(not old.alive(), "the old Buddy is still running")
+        check(old.find_all("terminate"), "the old Buddy was force quit instead of quitting by itself")
+        new.wait_type("terminate", 15)
+        new.pid = None  # this copy has quit; wait for the one in Program
+        relaunched = new.wait_for(lambda e: e.get("type") == "launch", 60, "Buddy to start from Program")
+        new.pid = relaunched.get("pid")
+        check(relaunched.get("bundlePath") == str(installed), "Buddy runs from %s" % relaunched.get("bundlePath"))
+        check(not downloaded.exists(), "%s is still there" % downloaded)
+        check(installed.stat().st_ino != old_inode, "the old Buddy in Program was not replaced")
+        names = sorted(p.name for p in applications.iterdir())
+        check(names == ["Buddy.app"], "Program contains %s" % names)
+        flags = quarantined_files(installed)
+        check(not flags, "the moved copy keeps the quarantine flag: %s" % flags[:3])
+        signature = run(["codesign", "--verify", "--deep", "--strict", str(installed)], check_result=False, timeout=60)
+        check(signature.returncode == 0, "the moved app's signature is broken: %s" % signature.stderr.strip())
+        time.sleep(2)
+        check(len(new.find_all("movePrompt")) == 1, "Buddy offered to move again after moving")
+        ctx.note("Flytt till Program: \"Buddy 3.app\" → Buddy.app, gammal Buddy avslutad och ersatt, "
+                 "omstartad från Program på %.0f s" % (time.time() - began))
+        since = new.mark()
+        new.command("quit")
+        new.wait_type("terminate", 15, since)
+    finally:
+        stop(old)
+        stop(new)
+
+
+@test("T23", "Finns en nyare Buddy i Program öppnas den i stället", ["UC21"], modes=("inject",), quits=True)
+def test_newer_buddy_installed(ctx):
+    if not UPDATE_ZIP.exists():
+        raise TestSkipped("ingen nyare testversion byggdes (kräver Developer ID-hemligheterna)")
+    base, downloads, applications = move_folders(ctx, "newer")
+    run(["ditto", "-x", "-k", str(UPDATE_ZIP), str(applications)], timeout=60)
+    installed = applications / "Buddy.app"
+    downloaded = downloads / "Buddy 2.app"
+    run(["ditto", str(Path(ctx.args.app).resolve()), str(downloaded)], timeout=60)
+    extra = {"BUDDY_APPLICATIONS_DIR": str(applications), "BUDDY_SET_moveToApplications": "confirm"}
+    buddy = Buddy(ctx.args, base, ctx.mock.url, ctx.buddy.voice, extra, app=downloaded)
+    ctx.buddy = buddy
+    try:
+        buddy.launch()
+        prompt = buddy.wait_type("movePrompt", 40)
+        buddy.pid = prompt.get("pid")
+        time.sleep(1.0)
+        screenshot(ctx.out / "move-prompt-newer.png")
+        check(prompt.get("plan") == "openInstalled", "plan: %s" % prompt.get("plan"))
+        check(prompt.get("installedVersion") == UPDATE_VERSION, "installed version: %s" % prompt.get("installedVersion"))
+        check(prompt.get("title") == "Det finns en nyare Buddy i mappen Program", "title: %s" % prompt.get("title"))
+        expected = "Version %s finns redan i mappen Program. Den här kopian är version %s." % (UPDATE_VERSION, prompt.get("version"))
+        check(prompt.get("message", "").startswith(expected), "message: %s" % prompt.get("message"))
+        check(prompt.get("buttons") == ["Öppna Buddy i Program", "Fortsätt med den här"], "buttons: %s" % prompt.get("buttons"))
+        opened = buddy.wait_type("moveOpenInstalled", 20)
+        check(opened.get("trashed") is True, "the older download was not moved to the Trash: %s" % opened)
+        buddy.wait_type("terminate", 15)
+        buddy.pid = None
+        relaunched = buddy.wait_for(lambda e: e.get("type") == "launch", 60, "Buddy %s to start from Program" % UPDATE_VERSION)
+        buddy.pid = relaunched.get("pid")
+        check(relaunched.get("version") == UPDATE_VERSION, "version %s started" % relaunched.get("version"))
+        check(relaunched.get("bundlePath") == str(installed), "Buddy runs from %s" % relaunched.get("bundlePath"))
+        check(not downloaded.exists(), "%s is still there" % downloaded)
+        info = plistlib.loads((installed / "Contents" / "Info.plist").read_bytes())
+        check(info.get("CFBundleShortVersionString") == UPDATE_VERSION, "the newer Buddy in Program was overwritten")
+        since = buddy.mark()
+        buddy.command("quit")
+        buddy.wait_type("terminate", 15, since)
+    finally:
+        stop(buddy)
 
 
 # ---------------------------------------------------------------------------
