@@ -160,7 +160,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Buddy $VERSION" \
             --generate-notes \
-            --notes "Ladda ner Buddy.zip, packa upp den och flytta Buddy till Program. Appen är signerad med Developer ID (Subtree Communications AB) och notariserad av Apple."
+            --notes "Ladda ner Buddy.zip, packa upp den och öppna Buddy. Buddy erbjuder sig att flytta till Program och uppdaterar sig sedan själv. Appen är signerad med Developer ID (Subtree Communications AB) och notariserad av Apple."
 
       - name: Release that would be published
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'

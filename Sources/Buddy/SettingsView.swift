@@ -265,6 +265,15 @@ private struct UpdateSettingsTab: View {
     var body: some View {
         Form {
             LabeledContent("Version", value: updater.currentVersion)
+            if !AppMover.isInstalled {
+                HStack {
+                    Text("Buddy ligger inte i mappen Program.")
+                    Spacer()
+                    Button("Flytta till Program…") {
+                        AppMover.offerFromSettings()
+                    }
+                }
+            }
             Toggle("Uppdatera automatiskt", isOn: $settings.autoUpdate)
             Text(updater.statusText)
                 .fixedSize(horizontal: false, vertical: true)
