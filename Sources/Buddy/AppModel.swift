@@ -79,6 +79,9 @@ final class AppModel: ObservableObject {
     @Published var voicePickerOpen = false
     /// Opens the settings window (set by the window manager).
     var showSettingsWindow: (() -> Void)?
+    let updater: Updater
+    /// Last time Buddy heard, said or was asked to do something (updates wait for a quiet spell).
+    private(set) var lastActivityAt = Date()
 
     private var micWanted = false
     private var testing = false
@@ -86,6 +89,7 @@ final class AppModel: ObservableObject {
     private var lastLibraryVoices: [ElevenLabsAPI.Voice] = []
     private var cancellables: Set<AnyCancellable> = []
     private var tickTask: Task<Void, Never>?
+    private var updateTask: Task<Void, Never>?
     private let options = LaunchOptions.current
     private let commandReader: LineFileReader?
 
@@ -108,6 +112,7 @@ final class AppModel: ObservableObject {
             claude.endpoint = url
         }
         self.settings = settings
+        self.updater = Updater(settings: settings)
         self.store = store
         self.avatar = AvatarState()
         self.live = LiveState()
@@ -130,6 +135,9 @@ final class AppModel: ObservableObject {
         director.onEvent = { [weak self] event in
             self?.handle(event)
         }
+        updater.isBusy = { [weak self] in self?.isBusyForUpdate ?? true }
+        updater.lastActivity = { [weak self] in self?.lastActivityAt ?? Date() }
+        updater.quitApp = { [weak self] in self?.quit() }
         input.onTranscript = { [weak self] id, text in
             self?.heard(id: id, text: text)
         }
@@ -182,6 +190,13 @@ final class AppModel: ObservableObject {
             }
         }
         addLog("Buddy startade. Aktiv presentation: \(activeSession.name)")
+        updater.start()
+        updateTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                self?.updater.maybeInstall()
+            }
+        }
         if settings.anthropicKey.isEmpty {
             addLog("Tips: lägg in din Anthropic API-nyckel under Inställningar → AI.")
         }
@@ -288,6 +303,7 @@ final class AppModel: ObservableObject {
 
     private func heard(id: Int, text: String) {
         guard !testing else { return }
+        lastActivityAt = Date()
         EventLog.shared.record("transcript", ["segment": id, "text": text])
         live.transcript = text
         director.hear(segment: id, text: text)
@@ -406,6 +422,7 @@ final class AppModel: ObservableObject {
     /// Quits Buddy. An open sheet, such as the voice picker, would otherwise stop macOS
     /// from quitting the app, so sheets are closed first.
     func quit() {
+        updater.installOnQuitIfReady()
         voicePickerOpen = false
         var closedSheet = false
         for window in NSApp.windows {
@@ -421,6 +438,12 @@ final class AppModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             NSApp.terminate(nil)
         }
+    }
+
+    /// Installing an update now would disturb: a dialog, speech, or one of Buddy's windows is open.
+    var isBusyForUpdate: Bool {
+        director.activeMoment != nil || player.isBusy || testing || voicePickerOpen
+            || NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) }
     }
 
     // MARK: - ElevenLabs voices
@@ -514,6 +537,9 @@ final class AppModel: ObservableObject {
         switch event {
         case .phase(let newPhase):
             phase = newPhase
+            if newPhase != .listening && newPhase != .paused {
+                lastActivityAt = Date()
+            }
             log.record("phase", ["phase": newPhase.rawValue])
             updateAvatar()
         case .momentStarted(let moment):
@@ -569,6 +595,7 @@ final class AppModel: ObservableObject {
     /// Commands from the end-to-end tests (inbox or command file).
     func perform(_ command: InboxCommand) {
         EventLog.shared.record("command", ["name": command.name, "value": command.value.map { $0 as Any } ?? NSNull()])
+        lastActivityAt = Date()
         let on = command.value.map { $0 == "1" || $0.lowercased() == "true" } ?? true
         switch command.name {
         case "toggle":

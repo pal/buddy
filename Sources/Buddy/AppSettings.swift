@@ -93,6 +93,17 @@ final class AppSettings: ObservableObject {
     @Published var showSubtitles: Bool { didSet { save(showSubtitles, "showSubtitles") } }
     @Published var robotHue: Double { didSet { save(robotHue, "robotHue") } }
 
+    // Updates
+    @Published var autoUpdate: Bool { didSet { save(autoUpdate, "autoUpdate") } }
+
+    var lastUpdateCheck: Date? {
+        get {
+            let time = defaults.double(forKey: "lastUpdateCheck")
+            return time > 0 ? Date(timeIntervalSince1970: time) : nil
+        }
+        set { defaults.set(newValue?.timeIntervalSince1970 ?? 0, forKey: "lastUpdateCheck") }
+    }
+
     init() {
         let options = LaunchOptions.current
         let d: UserDefaults
@@ -143,6 +154,7 @@ final class AppSettings: ObservableObject {
         avatarSize = double("avatarSize", 200)
         showSubtitles = bool("showSubtitles", true)
         robotHue = double("robotHue", 0.53)
+        autoUpdate = bool("autoUpdate", true)
     }
 
     var directorSettings: DirectorSettings {

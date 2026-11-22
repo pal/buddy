@@ -3,7 +3,7 @@ import SwiftUI
 import BuddyCore
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case voice, ai, listening, avatar, shortcuts
+    case voice, ai, listening, avatar, shortcuts, updates
 
     var id: String { rawValue }
     var title: String {
@@ -13,6 +13,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .listening: return "Lyssna"
         case .avatar: return "Avatar"
         case .shortcuts: return "Kortkommandon"
+        case .updates: return "Uppdateringar"
         }
     }
 }
@@ -48,6 +49,7 @@ struct SettingsView: View {
         case .listening: ListeningSettingsTab(settings: settings)
         case .avatar: AvatarSettingsTab(model: model, settings: settings)
         case .shortcuts: ShortcutsTab()
+        case .updates: UpdateSettingsTab(updater: model.updater, settings: settings)
         }
     }
 }
@@ -249,6 +251,38 @@ private struct AvatarSettingsTab: View {
                 model.testAvatar()
             }
             Text("Avataren ligger över allt annat, även bildspel i helskärm. Syns den inte över Keynote: tillåt andra appar att använda skärmen under bildspel i Keynotes inställningar, eller spela upp bildspelet i ett fönster.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct UpdateSettingsTab: View {
+    @ObservedObject var updater: Updater
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        Form {
+            LabeledContent("Version", value: updater.currentVersion)
+            Toggle("Uppdatera automatiskt", isOn: $settings.autoUpdate)
+            Text(updater.statusText)
+                .fixedSize(horizontal: false, vertical: true)
+            if let lastCheck = updater.lastCheck {
+                LabeledContent("Senast kontrollerat", value: lastCheck.formatted(date: .abbreviated, time: .shortened))
+            }
+            HStack {
+                Button("Sök efter uppdateringar nu") {
+                    Task { @MainActor in await updater.check() }
+                }
+                .disabled(updater.status == .checking)
+                if updater.readyToInstall {
+                    Button("Installera och starta om") {
+                        updater.install(relaunch: true)
+                    }
+                }
+            }
+            Text("Buddy söker efter en ny version en gång om dygnet. Den laddas ner och kontrolleras: den måste vara signerad av Subtree Communications AB och notariserad av Apple. Den installeras när Buddy inte har använts på 20 minuter, eller när du avslutar Buddy, aldrig mitt i en dialog.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

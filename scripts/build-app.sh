@@ -4,14 +4,15 @@
 #   scripts/build-app.sh                 # ad-hoc signed, for your own Mac
 #   SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" scripts/build-app.sh
 #
-# Environment: VERSION (default 0.1.0), BUILD_NUMBER (default 1), SIGN_IDENTITY (default "-" = ad-hoc).
+# Environment: VERSION (default 0.1.0), BUILD_NUMBER (default 1), SIGN_IDENTITY (default "-" = ad-hoc),
+# APP_PATH (default build/Buddy.app).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
-APP="build/Buddy.app"
+APP="${APP_PATH:-build/Buddy.app}"
 
 echo "==> Building Buddy $VERSION ($BUILD_NUMBER)"
 for arch in arm64 x86_64; do

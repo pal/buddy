@@ -110,6 +110,21 @@ jobs:
           path: build/Buddy.zip
           retention-days: 14
 
+      # A newer, signed and notarized copy of the same app, for the e2e test of auto-update.
+      - name: Build update test app (99.0.0)
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          VERSION=99.0.0 BUILD_NUMBER=9999 APP_PATH=build/update/Buddy.app scripts/build-app.sh
+          scripts/notarize.sh build/update/Buddy.app
+          ditto -c -k --keepParent build/update/Buddy.app build/update/Buddy.zip
+
       # End-to-end tests of the app bundle built above.
       - name: Prepare runner for e2e (virtual microphone, permissions)
         run: e2e/setup-ci.sh build/Buddy.app

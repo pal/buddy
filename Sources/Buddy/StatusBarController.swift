@@ -22,7 +22,7 @@ final class StatusBarController: NSObject {
             "menuItems": item.menu?.items.map(\.title) ?? [],
         ])
         model.objectWillChange
-            .merge(with: model.store.objectWillChange)
+            .merge(with: model.store.objectWillChange, model.updater.objectWillChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refresh()
@@ -89,6 +89,8 @@ final class StatusBarController: NSObject {
         add(menu, "Kontrollpanel…", #selector(showControlPanel))
         add(menu, "Redigera presentationer…", #selector(showEditor))
         add(menu, "Inställningar…", #selector(showSettings))
+        add(menu, model.updater.readyToInstall ? "Installera ny version och starta om" : "Sök efter uppdateringar…",
+            #selector(checkForUpdates))
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Avsluta Buddy", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -165,6 +167,16 @@ final class StatusBarController: NSObject {
     @objc private func showSettings() { windows.showSettings() }
     @objc private func showControlPanel() { windows.showControlPanel() }
     @objc private func quit() { model.quit() }
+
+    @objc private func checkForUpdates() {
+        if model.updater.readyToInstall {
+            model.updater.install(relaunch: true)
+            return
+        }
+        model.settingsTab = .updates
+        windows.showSettings()
+        Task { @MainActor in await model.updater.check() }
+    }
 
     @objc private func selectSession(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let id = UUID(uuidString: raw) else { return }
