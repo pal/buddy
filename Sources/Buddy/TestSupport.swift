@@ -16,6 +16,8 @@ struct LaunchOptions {
     let anthropicKey: String?
     /// ElevenLabs API base URL, e.g. a local mock server (BUDDY_ELEVENLABS_URL).
     let elevenLabsURL: URL?
+    /// Where Buddy looks for new releases instead of GitHub (BUDDY_UPDATE_FEED).
+    let updateFeedURL: URL?
     /// JSON Lines file where Buddy records what it does (BUDDY_EVENT_LOG).
     let eventLog: URL?
     /// File with test input, one JSON object per line: {"say": "..."} or {"command": "..."}.
@@ -36,6 +38,7 @@ struct LaunchOptions {
         claudeURL = url("BUDDY_CLAUDE_URL")
         anthropicKey = environment["BUDDY_ANTHROPIC_KEY"]
         elevenLabsURL = url("BUDDY_ELEVENLABS_URL")
+        updateFeedURL = url("BUDDY_UPDATE_FEED")
         eventLog = url("BUDDY_EVENT_LOG")
         inbox = url("BUDDY_INBOX")
         commands = url("BUDDY_COMMANDS")
@@ -66,8 +69,12 @@ final class EventLog {
             return
         }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        // Appends, so a Buddy that restarts itself after an update keeps writing to the same log.
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
         handle = try? FileHandle(forWritingTo: url)
+        _ = try? handle?.seekToEnd()
     }
 
     var isEnabled: Bool { handle != nil }

@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -94,11 +95,18 @@ USE_CASES = {
     "UC16": "Fasta repliker förbereds med Eleven v4 och spelas direkt",
     "UC17": "Om ElevenLabs inte svarar pratar Buddy vidare med macOS-rösten",
     "UC18": "Inställningarna får plats på skärmen, alla flikar går att nå och röstväljaren visar svenska röster",
+    "UC19": "Buddy uppdaterar sig själv till en ny signerad och notariserad version och startar om",
 }
-SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts"]
+SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts", "updates"]
+UPDATE_ZIP = ROOT / "build" / "update" / "Buddy.zip"
+UPDATE_VERSION = "99.0.0"
 
 
 class TestFailure(Exception):
+    pass
+
+
+class TestSkipped(Exception):
     pass
 
 
@@ -532,6 +540,78 @@ class MockElevenLabs:
 
 
 # ---------------------------------------------------------------------------
+# Mock GitHub releases (auto-update)
+
+
+class MockReleases:
+    """Answers like GitHub's "latest release" API and serves the release's Buddy.zip."""
+
+    def __init__(self, archive, version):
+        self.archive = Path(archive).read_bytes()
+        self.version = version
+        self.requests = []
+        self.lock = threading.Lock()
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    @property
+    def url(self):
+        return "http://127.0.0.1:%d" % self.port
+
+    @property
+    def feed(self):
+        return self.url + "/repos/pal/buddy/releases/latest"
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.server.shutdown()
+
+    def _handler(self):
+        mock = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def reply(self, status, payload, content_type):
+                self.send_response(status)
+                self.send_header("content-type", content_type)
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_GET(self):
+                path = urlparse(self.path).path
+                with mock.lock:
+                    mock.requests.append({"path": path, "userAgent": self.headers.get("user-agent", ""), "t": time.time()})
+                if path == "/repos/pal/buddy/releases/latest":
+                    tag = "v" + mock.version
+                    body = {
+                        "tag_name": tag, "name": "Buddy " + mock.version, "draft": False, "prerelease": False,
+                        "html_url": "https://github.com/pal/buddy/releases/tag/" + tag,
+                        "assets": [{"name": "Buddy.zip", "size": len(mock.archive),
+                                    "browser_download_url": "%s/download/%s/Buddy.zip" % (mock.url, tag)}],
+                    }
+                    self.reply(200, json.dumps(body).encode(), "application/json")
+                elif path.endswith("/Buddy.zip"):
+                    self.reply(200, mock.archive, "application/zip")
+                else:
+                    self.reply(404, b'{"message": "Not Found"}', "application/json")
+
+        return Handler
+
+
+def signing_team(app):
+    """The Developer ID team that signed an app, or None."""
+    result = run(["codesign", "-dv", "--verbose=2", str(app)], check_result=False, timeout=30)
+    match = re.search(r"^TeamIdentifier=(\S+)$", result.stderr, re.MULTILINE)
+    return match.group(1) if match and match.group(1) != "not" else None
+
+
+# ---------------------------------------------------------------------------
 # Helpers that run on the Mac
 
 
@@ -584,8 +664,8 @@ def screenshot(path):
 
 
 class Buddy:
-    def __init__(self, args, workdir, mock_url, voice, extra_env=None):
-        self.app = Path(args.app).resolve()
+    def __init__(self, args, workdir, mock_url, voice, extra_env=None, app=None):
+        self.app = Path(app or args.app).resolve()
         self.mode = args.mode
         self.dir = workdir
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -603,7 +683,7 @@ class Buddy:
         self.pid = None
 
     def launch(self):
-        for path in (self.inbox, self.commands):
+        for path in (self.inbox, self.commands, self.log_path):
             path.write_text("")
         env = {
             "BUDDY_DATA_DIR": str(self.data),
@@ -619,6 +699,8 @@ class Buddy:
             "BUDDY_SET_replySilence": "1.2",
             "BUDDY_SET_idleTimeout": "90",
             "BUDDY_SET_showSubtitles": "1",
+            # Never ask the real GitHub for updates during the tests; T21 turns this on with a mock feed.
+            "BUDDY_SET_autoUpdate": "0",
         }
         if self.mode == "live":
             env["BUDDY_ANTHROPIC_KEY"] = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -1372,6 +1454,73 @@ def test_quit_elevenlabs(ctx):
 
 
 # ---------------------------------------------------------------------------
+# Auto-update (a third run of the app, from a copy that may replace itself)
+
+
+@test("T21", "Uppdaterar sig själv till en ny signerad version och startar om", ["UC19"], modes=("inject",), quits=True)
+def test_auto_update(ctx):
+    if not UPDATE_ZIP.exists():
+        raise TestSkipped("ingen signerad testversion byggdes (kräver Developer ID-hemligheterna)")
+    team = signing_team(ctx.args.app)
+    if not team:
+        raise TestSkipped("appen är inte signerad med Developer ID")
+    folder = ctx.out / "update" / "Applications"
+    folder.mkdir(parents=True, exist_ok=True)
+    app = folder / "Buddy.app"
+    run(["ditto", str(Path(ctx.args.app).resolve()), str(app)], timeout=60)
+    releases = MockReleases(UPDATE_ZIP, UPDATE_VERSION)
+    releases.start()
+    began = time.time()
+    try:
+        extra = {
+            "BUDDY_SET_autoUpdate": "1",
+            "BUDDY_UPDATE_FEED": releases.feed,
+            "BUDDY_SET_updateCheckDelay": "1",
+            "BUDDY_SET_updateIdleMinutes": "0",
+        }
+        buddy = Buddy(ctx.args, ctx.out / "update", ctx.mock.url, ctx.buddy.voice, extra, app=app)
+        ctx.buddy = buddy
+        buddy.launch()
+        first = buddy.wait_type("launch", 40)
+        buddy.pid = first.get("pid")
+        old_version = first.get("version")
+        check(old_version != UPDATE_VERSION, "the copy already reports version %s" % old_version)
+        found = buddy.wait_type("updateCheck", 30)
+        check(found.get("latest") == UPDATE_VERSION and found.get("available"), "update check: %s" % found)
+        ready = buddy.wait_for(lambda e: e.get("type") in ("updateReady", "updateError", "updateUnavailable"), 120,
+                               "the update to be downloaded and verified")
+        check(ready.get("type") == "updateReady", "the update was not accepted: %s" % ready)
+        check(ready.get("team") == team, "the update is signed by team %s, not %s" % (ready.get("team"), team))
+        installed = buddy.wait_type("updateInstalled", 60)
+        check(installed.get("path") == str(app), "installed at %s" % installed.get("path"))
+        buddy.wait_type("terminate", 30)
+        buddy.pid = None  # the old version has quit; wait for the new one
+        relaunched = buddy.wait_for(lambda e: e.get("type") == "launch" and e.get("version") == UPDATE_VERSION, 60,
+                                    "version %s to start" % UPDATE_VERSION)
+        buddy.pid = relaunched.get("pid")
+        check(relaunched.get("bundlePath") == str(app), "the new version runs from %s" % relaunched.get("bundlePath"))
+        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+        check(info.get("CFBundleShortVersionString") == UPDATE_VERSION, "Info.plist says %s" % info.get("CFBundleShortVersionString"))
+        signature = run(["codesign", "--verify", "--deep", "--strict", str(app)], check_result=False, timeout=60)
+        check(signature.returncode == 0, "the installed app's signature is broken: %s" % signature.stderr.strip())
+        gatekeeper = run(["spctl", "--assess", "--type", "execute", str(app)], check_result=False, timeout=60)
+        check(gatekeeper.returncode == 0, "Gatekeeper rejects the installed app: %s" % gatekeeper.stderr.strip())
+        downloads = [r for r in releases.requests if r["path"].endswith("/Buddy.zip")]
+        check(len(downloads) == 1, "Buddy.zip was downloaded %d times" % len(downloads))
+        again = buddy.wait_for(lambda e: e.get("type") == "updateCheck" and e.get("current") == UPDATE_VERSION, 30,
+                               "the new version to check for updates")
+        check(again.get("available") is False, "the new version wants to update again: %s" % again)
+        ctx.note("Automatisk uppdatering: %s → %s, installerad och omstartad på %.0f s" % (
+            old_version, UPDATE_VERSION, time.time() - began))
+        since = buddy.mark()
+        buddy.command("quit")
+        buddy.wait_type("terminate", 15, since)
+    finally:
+        releases.stop()
+        (ctx.out / "release-requests.json").write_text(json.dumps(releases.requests, indent=2))
+
+
+# ---------------------------------------------------------------------------
 # Runner
 
 
@@ -1490,6 +1639,9 @@ def main():
             try:
                 entry["run"](ctx)
                 result["status"] = "passed"
+            except TestSkipped as reason:
+                result["status"] = "skipped"
+                result["error"] = str(reason)
             except TestFailure as error:
                 result["status"] = "failed"
                 result["error"] = str(error)

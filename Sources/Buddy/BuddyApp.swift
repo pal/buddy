@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        model?.updater.installOnQuitIfReady()
         model?.shutdown()
         EventLog.shared.record("terminate")
     }
@@ -66,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "pid": Int(ProcessInfo.processInfo.processIdentifier),
             "bundleID": Bundle.main.bundleIdentifier ?? "",
             "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
+            "bundlePath": Bundle.main.bundlePath,
             "macOS": ProcessInfo.processInfo.operatingSystemVersionString,
             "activationPolicy": policy,
             "screens": NSScreen.screens.map { EventLog.frame($0.frame) },

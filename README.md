@@ -58,6 +58,12 @@ Med ElevenLabs är **Eleven v4 Turbo** förvalt: ElevenLabs mest uttrycksfulla m
 
 Modellerna Eleven v4 (högst kvalitet men långsammare) och Flash v2.5 (snabbast) finns också att välja.
 
+## Uppdateringar
+
+Buddy uppdaterar sig själv. En gång om dygnet frågar Buddy GitHub efter den senaste versionen. En ny version laddas ner och kontrolleras innan den används: den måste vara signerad av samma Developer ID (Subtree Communications AB) och notariserad av Apple. Den installeras när Buddy inte har använts på 20 minuter, eller när du avslutar Buddy, och aldrig mitt i en dialog eller medan ett av Buddys fönster är öppet. Sedan startar Buddy om.
+
+Under Inställningar → Uppdateringar kan du stänga av automatiska uppdateringar, söka efter en ny version direkt och installera en nedladdad version på en gång. Automatiska uppdateringar kräver att Buddy ligger i en mapp du får ändra i, till exempel Program. En kopia du byggt själv uppdateras inte.
+
 ## Så fungerar en dialog
 
 1. Buddy lyssnar efter triggerfraser.
