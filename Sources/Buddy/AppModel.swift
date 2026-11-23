@@ -74,11 +74,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var listening = false
     @Published private(set) var progressStamp = 0
     @Published private(set) var problem: String?
-    /// Selected page in the settings window, and whether the voice picker is open.
-    @Published var settingsTab: SettingsTab = .voice
+    /// Selected pane in the settings window (remembered), and whether the voice picker is open.
+    @Published var settingsTab: SettingsTab = .voice {
+        didSet { settings.lastSettingsTab = settingsTab.rawValue }
+    }
     @Published var voicePickerOpen = false
     /// Opens the settings window (set by the window manager).
     var showSettingsWindow: (() -> Void)?
+    /// End-to-end test of the editing shortcuts in the settings window (set by the window manager).
+    var testEditShortcuts: (() -> Void)?
     let updater: Updater
     /// Last time Buddy heard, said or was asked to do something (updates wait for a quiet spell).
     private(set) var lastActivityAt = Date()
@@ -127,6 +131,7 @@ final class AppModel: ObservableObject {
         self.activeSession = session
         self.director = Director(session: session, settings: settings.directorSettings, brain: claude, voice: player)
         settings.activeSessionID = session.id.uuidString
+        settingsTab = SettingsTab(rawValue: settings.lastSettingsTab) ?? .voice
         wire()
         applySettings()
     }
@@ -625,6 +630,12 @@ final class AppModel: ObservableObject {
             settingsTab = .voice
             showSettingsWindow?()
             voicePickerOpen = true
+        case "editShortcuts":
+            testEditShortcuts?()
+        case "voiceProvider":
+            if let provider = command.value.flatMap(VoiceProvider.init(rawValue:)) {
+                settings.voiceProvider = provider
+            }
         case "elevenVoices":
             listElevenLabsVoicesForTest()
         case "elevenUseVoice":

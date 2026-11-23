@@ -7,10 +7,12 @@ import SwiftUI
 final class WindowManager {
     private let model: AppModel
     private var windows: [String: NSWindow] = [:]
+    private var settings: SettingsWindowController?
 
     init(model: AppModel) {
         self.model = model
         model.showSettingsWindow = { [weak self] in self?.showSettings() }
+        model.testEditShortcuts = { [weak self] in self?.settingsController().testEditShortcuts() }
     }
 
     func showEditor() {
@@ -21,10 +23,15 @@ final class WindowManager {
     }
 
     func showSettings() {
-        show(id: "settings", title: "Buddy – inställningar",
-             size: NSSize(width: 680, height: 620), minSize: NSSize(width: 600, height: 420)) {
-            SettingsView(model: model, settings: model.settings)
-        }
+        let tab = model.settingsTab
+        settingsController().show(tab)
+    }
+
+    private func settingsController() -> SettingsWindowController {
+        if let settings { return settings }
+        let controller = SettingsWindowController(model: model)
+        settings = controller
+        return controller
     }
 
     func showControlPanel() {

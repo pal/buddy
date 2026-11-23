@@ -98,13 +98,16 @@ USE_CASES = {
     "UC15": "En svensk röst väljs ur ElevenLabs röstbibliotek",
     "UC16": "Fasta repliker förbereds med Eleven v4 och spelas direkt",
     "UC17": "Om ElevenLabs inte svarar pratar Buddy vidare med macOS-rösten",
-    "UC18": "Inställningarna får plats på skärmen, alla flikar går att nå och röstväljaren visar svenska röster",
+    "UC18": "Inställningarna är ett vanligt macOS-inställningsfönster: flikar i verktygsfältet, fliken som rubrik, fönstret följer innehållet och får plats på skärmen; röstväljaren visar svenska röster",
     "UC19": "Buddy uppdaterar sig själv till en ny signerad och notariserad version och startar om",
     "UC20": "Startas Buddy från Hämtade filer flyttar den sig till Program som Buddy.app, ersätter den gamla och startar om därifrån",
     "UC21": "Finns en nyare Buddy i Program öppnas den i stället för den nedladdade kopian",
     "UC22": "En äldre Buddy uppdaterar sig själv från den riktiga releasen på GitHub, utan inloggning",
+    "UC23": "Kortkommandon fungerar i Buddys fönster: ⌘V klistrar in en API-nyckel och ⌘W stänger fönstret",
 }
 SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts", "updates"]
+SETTINGS_TITLES = {"voice": "Röst", "ai": "AI", "listening": "Lyssna", "avatar": "Avatar",
+                   "shortcuts": "Kortkommandon", "updates": "Uppdateringar"}
 UPDATE_ZIP = ROOT / "build" / "update" / "Buddy.zip"
 UPDATE_VERSION = "99.0.0"
 OLD_APP = ROOT / "build" / "old" / "Buddy.app"
@@ -1465,20 +1468,74 @@ def check_window_on_screen(window):
     check(inside, "the window %s is outside the visible screen %s" % (frame, visible))
 
 
-@test("T19", "Inställningarna får plats på skärmen; alla flikar och röstväljaren visas", ["UC18"], modes=("inject",))
+def check_settings_window(event, tab):
+    """The settings window looks and behaves like the settings of macOS's own apps."""
+    title = SETTINGS_TITLES[tab]
+    check(event.get("title") == title, "the window title is %r, not the pane's name %r" % (event.get("title"), title))
+    expected = [SETTINGS_TITLES[t] for t in SETTINGS_TABS]
+    check(event.get("toolbar") == expected, "the toolbar has %s, not %s" % (event.get("toolbar"), expected))
+    check(event.get("toolbarStyle") == "preference", "the toolbar style is %s" % event.get("toolbarStyle"))
+    check(not event.get("resizable") and not event.get("miniaturizable") and not event.get("zoomEnabled"),
+          "the window can be resized, minimized or zoomed: %s" % {k: event.get(k) for k in ("resizable", "miniaturizable", "zoomEnabled")})
+    content, pane = event["content"], event["pane"]
+    check(pane["h"] >= 80, "the pane reports a height of %.0f pt" % pane["h"])
+    check(abs(content["w"] - pane["w"]) <= 2 and abs(content["h"] - pane["h"]) <= 2,
+          "the window content (%.0f × %.0f) does not fit the pane (%.0f × %.0f)" % (content["w"], content["h"], pane["w"], pane["h"]))
+    check(not event.get("editingText"), "a text field is selected when the pane opens, so typing would overwrite it")
+    check_window_on_screen(event)
+
+
+def check_pane_layout(buddy, tab, since):
+    """The pane's content is not wider than the window, so nothing is cut off at the sides."""
+    layouts = [e for e in buddy.find_all("settingsPaneLayout", since) if e.get("tab") == tab]
+    if not layouts:
+        layouts = [e for e in buddy.find_all("settingsPaneLayout") if e.get("tab") == tab]
+    check(layouts, "the %s pane reported no layout" % tab)
+    layout = layouts[-1]
+    # SwiftUI's form lays rows with a slider out a couple of points wider than the content area
+    # (1 pt into each 32 pt margin, invisible). Anything more is content running past the edge,
+    # like the 8 to 100+ pt this check has caught.
+    check(layout["width"] <= layout["available"] + 4,
+          "the %s pane is %.0f pt wide but only %.0f pt fit in the window" % (tab, layout["width"], layout["available"]))
+
+
+@test("T19", "Inställningarna: flikar i verktygsfältet, fliken som rubrik, fönstret följer innehållet; röstväljaren visas",
+      ["UC18"], modes=("inject",))
 def test_settings_window(ctx):
     start_elevenlabs_buddy(ctx)
     buddy = ctx.buddy
     buddy.ensure_listening()
-    window = None
+    sizes = []
     for tab in SETTINGS_TABS:
         since = buddy.mark()
         buddy.command("settings", tab)
         buddy.wait_type("settingsShown", 10, since, tab=tab)
-        window = buddy.wait_type("window", 10, since, id="settings")
-        check_window_on_screen(window)
-        time.sleep(1.0)
-        screenshot(ctx.out / ("settings-%s.png" % tab))
+        buddy.wait_type("settingsWindow", 10, since, tab=tab)
+        time.sleep(1.0)  # SwiftUI lays out the pane and the window follows
+        screenshot(ctx.out / ("settings-%s.png" % tab))  # before the checks, so a failure leaves a picture
+        event = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == tab][-1]
+        check_settings_window(event, tab)
+        check_pane_layout(buddy, tab, since)
+        sizes.append("%s %.0f × %.0f" % (SETTINGS_TITLES[tab], event["frame"]["w"], event["frame"]["h"]))
+    # The voice pane with the macOS voice instead of ElevenLabs: other controls, and the window follows.
+    since = buddy.mark()
+    buddy.command("settings", "voice")
+    buddy.wait_type("settingsShown", 10, since, tab="voice")
+    eleven_height = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == "voice"][-1]["content"]["h"]
+    since = buddy.mark()
+    buddy.command("voiceProvider", "system")
+    time.sleep(1.5)
+    screenshot(ctx.out / "settings-voice-macos.png")
+    resized = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == "voice"]
+    check(resized, "the window did not follow the voice pane when the macOS voice was chosen")
+    check_settings_window(resized[-1], "voice")
+    check_pane_layout(buddy, "voice", since)
+    check(abs(resized[-1]["content"]["h"] - eleven_height) >= 10,
+          "the window kept its height (%.0f pt) although the pane changed" % eleven_height)
+    sizes.append("Röst med macOS-rösten %.0f × %.0f" % (resized[-1]["frame"]["w"], resized[-1]["frame"]["h"]))
+    since = buddy.mark()
+    buddy.command("voiceProvider", "elevenLabs")
+    time.sleep(1.0)
     since = buddy.mark()
     buddy.command("voicePicker")
     loaded = buddy.wait_type("voicePickerLoaded", 20, since)
@@ -1486,9 +1543,22 @@ def test_settings_window(ctx):
     check(loaded.get("library") == [v["name"] for v in ctx.eleven.library], "voice picker shows %s" % loaded.get("library"))
     time.sleep(1.5)
     screenshot(ctx.out / "settings-voice-picker.png")
-    frame, visible = window["frame"], window["visible"]
-    ctx.note("Inställningsfönstret: %.0f × %.0f pt på en skärmyta av %.0f × %.0f pt" % (
-        frame["w"], frame["h"], visible["w"], visible["h"]))
+    ctx.note("Inställningsfönstrets storlek per flik (pt): " + ", ".join(sizes))
+
+
+@test("T25", "Kortkommandon i inställningarna: ⌘V klistrar in API-nyckeln, ⌘W stänger fönstret", ["UC23"], modes=("inject",))
+def test_edit_shortcuts(ctx):
+    buddy = ctx.buddy  # the ElevenLabs run from T15–T19
+    since = buddy.mark()
+    buddy.command("editShortcuts")
+    result = buddy.wait_type("editShortcuts", 30, since)
+    check(result.get("fieldFound"), "the API key field was not found in the AI pane")
+    check(result.get("pasteIntoField"), "⌘V did not paste into the API key field")
+    check(result.get("pasteIntoSetting"), "the pasted key did not reach the setting")
+    check(result.get("closedWithCommandW"), "⌘W did not close the settings window")
+    check(result.get("keyRestored"), "the API key was not restored after the test")
+    ctx.note("⌘V i API-nyckelfältet utan huvudmeny (som Buddy var före den här ändringen): %s; med huvudmenyn: klistrar in. ⌘W stänger fönstret." % (
+        "klistrar ändå in" if result.get("pasteWithoutMainMenu") else "klistrar inte in"))
 
 
 @test("T20", "Avslutas rent (ElevenLabs)", ["UC1"], modes=("inject",), quits=True)
