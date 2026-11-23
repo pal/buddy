@@ -1481,7 +1481,19 @@ def check_settings_window(event, tab):
     check(pane["h"] >= 80, "the pane reports a height of %.0f pt" % pane["h"])
     check(abs(content["w"] - pane["w"]) <= 2 and abs(content["h"] - pane["h"]) <= 2,
           "the window content (%.0f × %.0f) does not fit the pane (%.0f × %.0f)" % (content["w"], content["h"], pane["w"], pane["h"]))
+    check(not event.get("editingText"), "a text field is selected when the pane opens, so typing would overwrite it")
     check_window_on_screen(event)
+
+
+def check_pane_layout(buddy, tab, since):
+    """The pane's content is not wider than the window, so nothing is cut off at the sides."""
+    layouts = [e for e in buddy.find_all("settingsPaneLayout", since) if e.get("tab") == tab]
+    if not layouts:
+        layouts = [e for e in buddy.find_all("settingsPaneLayout") if e.get("tab") == tab]
+    check(layouts, "the %s pane reported no layout" % tab)
+    layout = layouts[-1]
+    check(layout["width"] <= layout["available"] + 1,
+          "the %s pane is %.0f pt wide but only %.0f pt fit in the window" % (tab, layout["width"], layout["available"]))
 
 
 @test("T19", "Inställningarna: flikar i verktygsfältet, fliken som rubrik, fönstret följer innehållet; röstväljaren visas",
@@ -1499,8 +1511,28 @@ def test_settings_window(ctx):
         time.sleep(1.0)  # SwiftUI lays out the pane and the window follows
         event = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == tab][-1]
         check_settings_window(event, tab)
+        check_pane_layout(buddy, tab, since)
         sizes.append("%s %.0f × %.0f" % (SETTINGS_TITLES[tab], event["frame"]["w"], event["frame"]["h"]))
         screenshot(ctx.out / ("settings-%s.png" % tab))
+    # The voice pane with the macOS voice instead of ElevenLabs: other controls, and the window follows.
+    since = buddy.mark()
+    buddy.command("settings", "voice")
+    buddy.wait_type("settingsShown", 10, since, tab="voice")
+    eleven_height = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == "voice"][-1]["content"]["h"]
+    since = buddy.mark()
+    buddy.command("voiceProvider", "system")
+    time.sleep(1.5)
+    resized = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == "voice"]
+    check(resized, "the window did not follow the voice pane when the macOS voice was chosen")
+    check_settings_window(resized[-1], "voice")
+    check_pane_layout(buddy, "voice", since)
+    check(abs(resized[-1]["content"]["h"] - eleven_height) >= 10,
+          "the window kept its height (%.0f pt) although the pane changed" % eleven_height)
+    sizes.append("Röst med macOS-rösten %.0f × %.0f" % (resized[-1]["frame"]["w"], resized[-1]["frame"]["h"]))
+    screenshot(ctx.out / "settings-voice-macos.png")
+    since = buddy.mark()
+    buddy.command("voiceProvider", "elevenLabs")
+    time.sleep(1.0)
     since = buddy.mark()
     buddy.command("voicePicker")
     loaded = buddy.wait_type("voicePickerLoaded", 20, since)

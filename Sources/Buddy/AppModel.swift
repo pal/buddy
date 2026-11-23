@@ -632,6 +632,10 @@ final class AppModel: ObservableObject {
             voicePickerOpen = true
         case "editShortcuts":
             testEditShortcuts?()
+        case "voiceProvider":
+            if let provider = command.value.flatMap(VoiceProvider.init(rawValue:)) {
+                settings.voiceProvider = provider
+            }
         case "elevenVoices":
             listElevenLabsVoicesForTest()
         case "elevenUseVoice":

@@ -43,6 +43,7 @@ final class SettingsWindowController: NSWindowController {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         panes.fitWindow(animated: false)
+        panes.clearFocus()
     }
 
     // MARK: End-to-end tests
@@ -143,6 +144,7 @@ final class SettingsWindowController: NSWindowController {
             "visible": EventLog.frame(screen?.visibleFrame ?? .zero),
             "isVisible": window.isVisible,
             "onActiveSpace": window.isOnActiveSpace,
+            "editingText": window.firstResponder is NSText,
         ])
     }
 }
@@ -201,6 +203,19 @@ final class SettingsTabViewController: NSTabViewController {
             model.settingsTab = tab
         }
         fitWindow(animated: visible)
+        clearFocus()
+    }
+
+    /// A pane opens without a selected text field, so a key press cannot overwrite an API key.
+    /// AppKit selects the first field once the window is shown, so this runs right after.
+    func clearFocus() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.view.window else { return }
+            if window.firstResponder is NSText {
+                _ = window.makeFirstResponder(nil)
+            }
+            self.onLayout?()
+        }
     }
 
     override func preferredContentSizeDidChange(for viewController: NSViewController) {

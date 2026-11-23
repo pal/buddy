@@ -38,14 +38,30 @@ struct SettingsPane: View {
     @ObservedObject var settings: AppSettings
 
     static let width: CGFloat = 600
+    static let margin: CGFloat = 32
 
     var body: some View {
         content
             .formStyle(.columns)
-            .padding(.horizontal, 32)
+            .background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { Self.record(tab, proxy.size) }
+                    .onChange(of: proxy.size) { Self.record(tab, $0) }
+            })
+            .padding(.horizontal, Self.margin)
             .padding(.vertical, 24)
             .frame(width: Self.width)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// For the end-to-end tests: the width the pane's content takes, which must fit the window.
+    @MainActor private static func record(_ tab: SettingsTab, _ size: CGSize) {
+        guard EventLog.shared.isEnabled else { return }
+        EventLog.shared.record("settingsPaneLayout", [
+            "tab": tab.rawValue,
+            "width": Double(size.width),
+            "available": Double(width - 2 * margin),
+        ])
     }
 
     @ViewBuilder private var content: some View {
@@ -306,21 +322,26 @@ private struct AvatarPane: View {
 }
 
 private struct ShortcutsPane: View {
+    private let shortcuts = [
+        ("Starta nästa moment, eller avsluta dialogen", "⌃⌥⌘B"),
+        ("Tyst! Avbryt Buddys replik", "⌃⌥⌘."),
+        ("Slå på eller av lyssnandet", "⌃⌥⌘L"),
+    ]
+
     var body: some View {
-        Form {
-            LabeledContent("Starta nästa moment eller avsluta dialogen:") {
-                Text("⌃⌥⌘B")
+        VStack(alignment: .leading, spacing: 16) {
+            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
+                ForEach(shortcuts, id: \.1) { action, keys in
+                    GridRow {
+                        Text(action)
+                        Text(keys)
+                            .gridColumnAlignment(.trailing)
+                    }
+                }
             }
-            LabeledContent("Tyst! Avbryt Buddys replik:") {
-                Text("⌃⌥⌘.")
-            }
-            LabeledContent("Slå på eller av lyssnandet:") {
-                Text("⌃⌥⌘L")
-            }
-            Section {
-                Note("Kortkommandona fungerar även när presentationsprogrammet ligger överst.")
-            }
+            Note("Kortkommandona fungerar även när presentationsprogrammet ligger överst.")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
