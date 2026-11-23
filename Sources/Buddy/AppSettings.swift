@@ -96,6 +96,9 @@ final class AppSettings: ObservableObject {
     // Updates
     @Published var autoUpdate: Bool { didSet { save(autoUpdate, "autoUpdate") } }
 
+    /// The settings pane shown last; the settings window opens on it next time.
+    @Published var lastSettingsTab: String { didSet { save(lastSettingsTab, "lastSettingsTab") } }
+
     var lastUpdateCheck: Date? {
         get {
             let time = defaults.double(forKey: "lastUpdateCheck")
@@ -155,6 +158,7 @@ final class AppSettings: ObservableObject {
         showSubtitles = bool("showSubtitles", true)
         robotHue = double("robotHue", 0.53)
         autoUpdate = bool("autoUpdate", true)
+        lastSettingsTab = string("lastSettingsTab", "voice")
     }
 
     var directorSettings: DirectorSettings {

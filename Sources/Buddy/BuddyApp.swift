@@ -7,7 +7,7 @@ enum BuddyApp {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        // Menu bar app: no Dock icon, no main menu.
+        // Menu bar app: no Dock icon and no menu bar (the main menu only handles shortcuts).
         app.setActivationPolicy(.accessory)
         withExtendedLifetime(delegate) {
             app.run()
@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var overlay: OverlayController?
     private var hotKeys: HotKeyCenter?
+    private var mainMenu: MainMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A copy started from Downloads first offers to move itself to the Applications folder.
@@ -39,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.windows = windows
         overlay = OverlayController(avatar: model.avatar, settings: model.settings)
         statusBar = StatusBarController(model: model, windows: windows)
+        let mainMenu = MainMenu(model: model)
+        mainMenu.install()
+        self.mainMenu = mainMenu
 
         let hotKeys = HotKeyCenter()
         let registered = [
