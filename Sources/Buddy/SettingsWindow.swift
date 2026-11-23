@@ -64,27 +64,12 @@ final class SettingsWindowController: NSWindowController {
             pasteboard.setString(pasted, forType: .string)
             let menu = NSApp.mainMenu
 
-            func paste() async -> (field: Bool, setting: Bool) {
-                guard let window = self.window,
-                      let field = SettingsWindowController.secureField(in: window.contentView)
-                else { return (false, false) }
-                _ = window.makeFirstResponder(field)
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                self.sendCommand("a", keyCode: 0)
-                self.sendCommand("v", keyCode: 9)
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                let result = (field.stringValue == pasted, settings.anthropicKey == pasted)
-                settings.anthropicKey = original
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                return result
-            }
-
             try? await Task.sleep(nanoseconds: 700_000_000)
             let fieldFound = window.flatMap { SettingsWindowController.secureField(in: $0.contentView) } != nil
             NSApp.mainMenu = nil
-            let withoutMenu = await paste()
+            let withoutMenu = await pasteIntoKeyField(pasted, restoring: original)
             NSApp.mainMenu = menu
-            let withMenu = await paste()
+            let withMenu = await pasteIntoKeyField(pasted, restoring: original)
             sendCommand("w", keyCode: 13)
             try? await Task.sleep(nanoseconds: 500_000_000)
             pasteboard.clearContents()
@@ -100,6 +85,23 @@ final class SettingsWindowController: NSWindowController {
                 "keyRestored": settings.anthropicKey == original,
             ])
         }
+    }
+
+    /// Focuses the key field, presses ⌘A and ⌘V, and reports whether the pasted text reached the
+    /// field and the setting. Then puts the old key back.
+    private func pasteIntoKeyField(_ pasted: String, restoring original: String) async -> (field: Bool, setting: Bool) {
+        guard let window, let field = SettingsWindowController.secureField(in: window.contentView) else {
+            return (false, false)
+        }
+        _ = window.makeFirstResponder(field)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        sendCommand("a", keyCode: 0)
+        sendCommand("v", keyCode: 9)
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        let result = (field: field.stringValue == pasted, setting: model.settings.anthropicKey == pasted)
+        model.settings.anthropicKey = original
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        return result
     }
 
     private func sendCommand(_ character: String, keyCode: UInt16) {
