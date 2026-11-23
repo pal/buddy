@@ -111,6 +111,7 @@ private struct ValueSlider: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 90, alignment: .leading)
         }
+        .sliderRowAlignment()
     }
 }
 
@@ -133,6 +134,16 @@ private struct RangeSlider: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }
+        .sliderRowAlignment()
+    }
+}
+
+private extension View {
+    /// A slider's own leading alignment guide sits a few points inside its frame, and the form
+    /// lines rows up by that guide: the row's label ended up 4 pt left of the others. Rows that
+    /// start with a slider use their frame's edge instead.
+    func sliderRowAlignment() -> some View {
+        alignmentGuide(.leading) { dimensions in dimensions[.leading] }
     }
 }
 
@@ -446,6 +457,7 @@ private struct AvatarPane: View {
                         .frame(width: 16, height: 16)
                         .frame(width: 90, alignment: .leading)
                 }
+                .sliderRowAlignment()
             }
             Row("Textning:", labels) {
                 Toggle("Visa det Buddy säger i en pratbubbla", isOn: $settings.showSubtitles)
