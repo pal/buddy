@@ -9,8 +9,9 @@ when Claude fails, and that Buddy does not hear itself. A second run of the app
 uses ElevenLabs (local mock server that validates every request and answers with
 real Swedish speech): choosing a Swedish voice from the Voice Library, Eleven v4
 Turbo with audio tags, fixed lines prepared with Eleven v4, and the fallback to
-the macOS voice. Further runs check that Buddy updates itself, and that a copy
-started from Downloads moves itself to the Applications folder as Buddy.app.
+the macOS voice. Further runs check that Buddy updates itself (from a mock feed,
+and from the real release on GitHub), and that a copy started from Downloads
+moves itself to the Applications folder as Buddy.app.
 
 Modes:
   inject  Sentences are delivered to Buddy as recognized text. No microphone.
@@ -36,7 +37,9 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, unquote, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIO = ROOT / "e2e" / "scenario.json"
@@ -99,10 +102,14 @@ USE_CASES = {
     "UC19": "Buddy uppdaterar sig själv till en ny signerad och notariserad version och startar om",
     "UC20": "Startas Buddy från Hämtade filer flyttar den sig till Program som Buddy.app, ersätter den gamla och startar om därifrån",
     "UC21": "Finns en nyare Buddy i Program öppnas den i stället för den nedladdade kopian",
+    "UC22": "En äldre Buddy uppdaterar sig själv från den riktiga releasen på GitHub, utan inloggning",
 }
 SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts", "updates"]
 UPDATE_ZIP = ROOT / "build" / "update" / "Buddy.zip"
 UPDATE_VERSION = "99.0.0"
+OLD_APP = ROOT / "build" / "old" / "Buddy.app"
+OLD_VERSION = "0.0.1"
+GITHUB_LATEST = "https://github.com/pal/buddy/releases/latest"
 
 
 class TestFailure(Exception):
@@ -1660,6 +1667,89 @@ def test_newer_buddy_installed(ctx):
         check(not downloaded.exists(), "%s is still there" % downloaded)
         info = plistlib.loads((installed / "Contents" / "Info.plist").read_bytes())
         check(info.get("CFBundleShortVersionString") == UPDATE_VERSION, "the newer Buddy in Program was overwritten")
+        since = buddy.mark()
+        buddy.command("quit")
+        buddy.wait_type("terminate", 15, since)
+    finally:
+        stop(buddy)
+
+
+# ---------------------------------------------------------------------------
+# Updating from the real release on GitHub
+
+
+def latest_release_version():
+    """The latest release's version, from GitHub's web redirect (not the API Buddy uses)."""
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    try:
+        build_opener(NoRedirect).open(Request(GITHUB_LATEST, method="HEAD"), timeout=30)
+    except HTTPError as error:
+        match = re.search(r"/releases/tag/v([0-9.]+)$", error.headers.get("Location", ""))
+        if match:
+            return match.group(1)
+        raise TestFailure("%s answered %s without a release tag" % (GITHUB_LATEST, error.code))
+    raise TestFailure("%s did not redirect to a release" % GITHUB_LATEST)
+
+
+@test("T24", "Uppdaterar sig själv från den riktiga releasen på GitHub", ["UC22"], modes=("inject",), quits=True)
+def test_update_from_github(ctx):
+    if not OLD_APP.exists():
+        raise TestSkipped("ingen äldre signerad testversion byggdes (kräver Developer ID-hemligheterna)")
+    team = signing_team(OLD_APP)
+    if not team:
+        raise TestSkipped("den äldre testversionen är inte signerad med Developer ID")
+    latest = latest_release_version()
+    base = ctx.out / "github-update"
+    folder = base / "Applications"
+    shutil.rmtree(base, ignore_errors=True)
+    folder.mkdir(parents=True)
+    app = folder / "Buddy.app"
+    run(["ditto", str(OLD_APP), str(app)], timeout=60)
+    # No BUDDY_UPDATE_FEED: Buddy asks the real GitHub, without credentials, like an installed copy.
+    extra = {
+        "BUDDY_SET_autoUpdate": "1",
+        "BUDDY_SET_updateCheckDelay": "1",
+        "BUDDY_SET_updateIdleMinutes": "0",
+    }
+    buddy = Buddy(ctx.args, base, ctx.mock.url, ctx.buddy.voice, extra, app=app)
+    ctx.buddy = buddy
+    began = time.time()
+    try:
+        buddy.launch()
+        first = buddy.wait_type("launch", 40)
+        buddy.pid = first.get("pid")
+        check(first.get("version") == OLD_VERSION, "the old copy reports version %s" % first.get("version"))
+        found = buddy.wait_type("updateCheck", 60)
+        check(found.get("latest") == latest and found.get("available") is True,
+              "update check against GitHub: %s (the latest release is %s)" % (found, latest))
+        ready = buddy.wait_for(lambda e: e.get("type") in ("updateReady", "updateError", "updateUnavailable"), 180,
+                               "the release from GitHub to be downloaded and verified")
+        check(ready.get("type") == "updateReady", "the release from GitHub was not accepted: %s" % ready)
+        check(ready.get("team") == team, "the release is signed by team %s, not %s" % (ready.get("team"), team))
+        installed = buddy.wait_type("updateInstalled", 60)
+        check(installed.get("path") == str(app), "installed at %s" % installed.get("path"))
+        buddy.wait_type("terminate", 30)
+        buddy.pid = None  # the old copy has quit; wait for the released version
+        relaunched = buddy.wait_for(lambda e: e.get("type") == "launch" and e.get("version") == latest, 60,
+                                    "Buddy %s from GitHub to start" % latest)
+        buddy.pid = relaunched.get("pid")
+        check(relaunched.get("bundlePath") == str(app), "the new version runs from %s" % relaunched.get("bundlePath"))
+        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+        check(info.get("CFBundleShortVersionString") == latest, "Info.plist says %s" % info.get("CFBundleShortVersionString"))
+        signature = run(["codesign", "--verify", "--deep", "--strict", str(app)], check_result=False, timeout=60)
+        check(signature.returncode == 0, "the installed app's signature is broken: %s" % signature.stderr.strip())
+        gatekeeper = run(["spctl", "--assess", "--type", "execute", str(app)], check_result=False, timeout=60)
+        check(gatekeeper.returncode == 0, "Gatekeeper rejects the installed app: %s" % gatekeeper.stderr.strip())
+        again = buddy.wait_for(lambda e: e.get("type") == "updateCheck" and e.get("current") == latest, 60,
+                               "the released version to check for updates")
+        check(again.get("available") is False, "the released version wants to update again: %s" % again)
+        errors = buddy.find_all("updateError")
+        check(not errors, "update errors: %s" % errors)
+        ctx.note("Uppdatering från GitHub utan inloggning: %s → %s (den publicerade releasen), "
+                 "nedladdad, kontrollerad, installerad och omstartad på %.0f s" % (OLD_VERSION, latest, time.time() - began))
         since = buddy.mark()
         buddy.command("quit")
         buddy.wait_type("terminate", 15, since)
