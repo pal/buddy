@@ -109,6 +109,8 @@ UPDATE_ZIP = ROOT / "build" / "update" / "Buddy.zip"
 UPDATE_VERSION = "99.0.0"
 OLD_APP = ROOT / "build" / "old" / "Buddy.app"
 OLD_VERSION = "0.0.1"
+# Releases from this version on find updates through GitHub's release page; older ones use the API.
+FIRST_PAGE_FEED_VERSION = "0.1.4"
 GITHUB_LATEST = "https://github.com/pal/buddy/releases/latest"
 
 
@@ -554,11 +556,14 @@ class MockElevenLabs:
 
 
 class MockReleases:
-    """Answers like GitHub's "latest release" API and serves the release's Buddy.zip."""
+    """Answers like GitHub: the release page (`/pal/buddy/releases/latest` redirects to the
+    release's tag), the "latest release" API, and the release's Buddy.zip. With
+    `page_failures`, that many requests for the release page fail, so Buddy must use the API."""
 
-    def __init__(self, archive, version):
+    def __init__(self, archive, version, page_failures=0):
         self.archive = Path(archive).read_bytes()
         self.version = version
+        self.page_failures = page_failures
         self.requests = []
         self.lock = threading.Lock()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
@@ -571,7 +576,15 @@ class MockReleases:
 
     @property
     def feed(self):
+        """The release page, which Buddy checks first."""
+        return self.url + "/pal/buddy/releases/latest"
+
+    @property
+    def api(self):
         return self.url + "/repos/pal/buddy/releases/latest"
+
+    def downloads(self):
+        return [r for r in self.requests if r["path"].endswith("/Buddy.zip") and r["method"] == "GET"]
 
     def start(self):
         self.thread.start()
@@ -586,30 +599,51 @@ class MockReleases:
             def log_message(self, *args):
                 pass
 
-            def reply(self, status, payload, content_type):
+            def reply(self, status, payload, content_type, head, location=None):
                 self.send_response(status)
                 self.send_header("content-type", content_type)
                 self.send_header("content-length", str(len(payload)))
+                if location:
+                    self.send_header("location", location)
                 self.end_headers()
-                self.wfile.write(payload)
+                if not head:
+                    self.wfile.write(payload)
 
-            def do_GET(self):
+            def handle_request(self, head):
                 path = urlparse(self.path).path
+                tag = "v" + mock.version
                 with mock.lock:
-                    mock.requests.append({"path": path, "userAgent": self.headers.get("user-agent", ""), "t": time.time()})
-                if path == "/repos/pal/buddy/releases/latest":
-                    tag = "v" + mock.version
+                    mock.requests.append({"path": path, "method": "HEAD" if head else "GET",
+                                          "userAgent": self.headers.get("user-agent", ""), "t": time.time()})
+                    failing = path == "/pal/buddy/releases/latest" and mock.page_failures > 0
+                    if failing:
+                        mock.page_failures -= 1
+                archive_path = "/pal/buddy/releases/download/%s/Buddy.zip" % tag
+                if path == "/pal/buddy/releases/latest":
+                    if failing:
+                        self.reply(503, b"Unavailable", "text/html", head)
+                    else:
+                        self.reply(302, b"", "text/html", head, location=mock.url + "/pal/buddy/releases/tag/" + tag)
+                elif path == "/pal/buddy/releases/tag/" + tag:
+                    self.reply(200, b"<html><title>Buddy</title></html>", "text/html", head)
+                elif path == "/repos/pal/buddy/releases/latest":
                     body = {
                         "tag_name": tag, "name": "Buddy " + mock.version, "draft": False, "prerelease": False,
                         "html_url": "https://github.com/pal/buddy/releases/tag/" + tag,
                         "assets": [{"name": "Buddy.zip", "size": len(mock.archive),
-                                    "browser_download_url": "%s/download/%s/Buddy.zip" % (mock.url, tag)}],
+                                    "browser_download_url": mock.url + archive_path}],
                     }
-                    self.reply(200, json.dumps(body).encode(), "application/json")
-                elif path.endswith("/Buddy.zip"):
-                    self.reply(200, mock.archive, "application/zip")
+                    self.reply(200, json.dumps(body).encode(), "application/json", head)
+                elif path == archive_path:
+                    self.reply(200, mock.archive, "application/zip", head)
                 else:
-                    self.reply(404, b'{"message": "Not Found"}', "application/json")
+                    self.reply(404, b'{"message": "Not Found"}', "application/json", head)
+
+            def do_GET(self):
+                self.handle_request(False)
+
+            def do_HEAD(self):
+                self.handle_request(True)
 
         return Handler
 
@@ -1485,6 +1519,7 @@ def test_auto_update(ctx):
         extra = {
             "BUDDY_SET_autoUpdate": "1",
             "BUDDY_UPDATE_FEED": releases.feed,
+            "BUDDY_UPDATE_API": releases.api,
             "BUDDY_SET_updateCheckDelay": "1",
             "BUDDY_SET_updateIdleMinutes": "0",
         }
@@ -1497,6 +1532,7 @@ def test_auto_update(ctx):
         check(old_version != UPDATE_VERSION, "the copy already reports version %s" % old_version)
         found = buddy.wait_type("updateCheck", 30)
         check(found.get("latest") == UPDATE_VERSION and found.get("available"), "update check: %s" % found)
+        check(found.get("source") == "page", "the update was found through %s, not the release page" % found.get("source"))
         ready = buddy.wait_for(lambda e: e.get("type") in ("updateReady", "updateError", "updateUnavailable"), 120,
                                "the update to be downloaded and verified")
         check(ready.get("type") == "updateReady", "the update was not accepted: %s" % ready)
@@ -1515,8 +1551,9 @@ def test_auto_update(ctx):
         check(signature.returncode == 0, "the installed app's signature is broken: %s" % signature.stderr.strip())
         gatekeeper = run(["spctl", "--assess", "--type", "execute", str(app)], check_result=False, timeout=60)
         check(gatekeeper.returncode == 0, "Gatekeeper rejects the installed app: %s" % gatekeeper.stderr.strip())
-        downloads = [r for r in releases.requests if r["path"].endswith("/Buddy.zip")]
+        downloads = releases.downloads()
         check(len(downloads) == 1, "Buddy.zip was downloaded %d times" % len(downloads))
+        check(not any(r["path"].startswith("/repos/") for r in releases.requests), "Buddy asked the API although the page answered")
         again = buddy.wait_for(lambda e: e.get("type") == "updateCheck" and e.get("current") == UPDATE_VERSION, 30,
                                "the new version to check for updates")
         check(again.get("available") is False, "the new version wants to update again: %s" % again)
@@ -1528,6 +1565,64 @@ def test_auto_update(ctx):
     finally:
         releases.stop()
         (ctx.out / "release-requests.json").write_text(json.dumps(releases.requests, indent=2))
+
+
+@test("T26", "Svarar inte releasesidan hämtas uppdateringen via API:t och installeras när Buddy avslutas", ["UC19"],
+      modes=("inject",), quits=True)
+def test_update_api_fallback(ctx):
+    if not UPDATE_ZIP.exists():
+        raise TestSkipped("ingen signerad testversion byggdes (kräver Developer ID-hemligheterna)")
+    team = signing_team(ctx.args.app)
+    if not team:
+        raise TestSkipped("appen är inte signerad med Developer ID")
+    base = ctx.out / "update-fallback"
+    folder = base / "Applications"
+    shutil.rmtree(base, ignore_errors=True)
+    folder.mkdir(parents=True)
+    app = folder / "Buddy.app"
+    run(["ditto", str(Path(ctx.args.app).resolve()), str(app)], timeout=60)
+    releases = MockReleases(UPDATE_ZIP, UPDATE_VERSION, page_failures=1000)
+    releases.start()
+    try:
+        # The default quiet spell (20 minutes) keeps Buddy from restarting; quitting installs.
+        extra = {
+            "BUDDY_SET_autoUpdate": "1",
+            "BUDDY_UPDATE_FEED": releases.feed,
+            "BUDDY_UPDATE_API": releases.api,
+            "BUDDY_SET_updateCheckDelay": "1",
+        }
+        buddy = Buddy(ctx.args, base, ctx.mock.url, ctx.buddy.voice, extra, app=app)
+        ctx.buddy = buddy
+        buddy.launch()
+        first = buddy.wait_type("launch", 40)
+        buddy.pid = first.get("pid")
+        buddy.wait_type("updateFeedFallback", 30)
+        found = buddy.wait_type("updateCheck", 30)
+        check(found.get("source") == "api" and found.get("latest") == UPDATE_VERSION and found.get("available"),
+              "update check through the API: %s" % found)
+        ready = buddy.wait_for(lambda e: e.get("type") in ("updateReady", "updateError", "updateUnavailable"), 120,
+                               "the update to be downloaded and verified")
+        check(ready.get("type") == "updateReady", "the update was not accepted: %s" % ready)
+        check(ready.get("team") == team, "the update is signed by team %s, not %s" % (ready.get("team"), team))
+        check(not buddy.find_all("updateInstalling"), "Buddy installed the update without a quiet spell")
+        since = buddy.mark()
+        buddy.command("quit")
+        installed = buddy.wait_type("updateInstalled", 30, since)
+        check(installed.get("path") == str(app), "installed at %s" % installed.get("path"))
+        buddy.wait_type("terminate", 15, since)
+        buddy.pid = None
+        time.sleep(3)
+        check(not [e for e in buddy.find_all("launch") if e.get("version") == UPDATE_VERSION],
+              "Buddy restarted after quitting; it should stay quit")
+        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+        check(info.get("CFBundleShortVersionString") == UPDATE_VERSION, "Info.plist says %s" % info.get("CFBundleShortVersionString"))
+        signature = run(["codesign", "--verify", "--deep", "--strict", str(app)], check_result=False, timeout=60)
+        check(signature.returncode == 0, "the installed app's signature is broken: %s" % signature.stderr.strip())
+        check(len(releases.downloads()) == 1, "Buddy.zip was downloaded %d times" % len(releases.downloads()))
+        ctx.note("Reservvägen via API:t: uppdateringen hämtades när releasesidan inte svarade och installerades när Buddy avslutades")
+    finally:
+        releases.stop()
+        stop(ctx.buddy)
 
 
 # ---------------------------------------------------------------------------
@@ -1678,6 +1773,10 @@ def test_newer_buddy_installed(ctx):
 # Updating from the real release on GitHub
 
 
+def version_tuple(version):
+    return tuple(int(part) for part in version.split("."))
+
+
 def latest_release_version():
     """The latest release's version, from GitHub's web redirect (not the API Buddy uses)."""
     class NoRedirect(HTTPRedirectHandler):
@@ -1725,6 +1824,7 @@ def test_update_from_github(ctx):
         found = buddy.wait_type("updateCheck", 60)
         check(found.get("latest") == latest and found.get("available") is True,
               "update check against GitHub: %s (the latest release is %s)" % (found, latest))
+        check(found.get("source") == "page", "the release was found through %s, not GitHub's release page" % found.get("source"))
         ready = buddy.wait_for(lambda e: e.get("type") in ("updateReady", "updateError", "updateUnavailable"), 180,
                                "the release from GitHub to be downloaded and verified")
         check(ready.get("type") == "updateReady", "the release from GitHub was not accepted: %s" % ready)
@@ -1743,11 +1843,17 @@ def test_update_from_github(ctx):
         check(signature.returncode == 0, "the installed app's signature is broken: %s" % signature.stderr.strip())
         gatekeeper = run(["spctl", "--assess", "--type", "execute", str(app)], check_result=False, timeout=60)
         check(gatekeeper.returncode == 0, "Gatekeeper rejects the installed app: %s" % gatekeeper.stderr.strip())
-        again = buddy.wait_for(lambda e: e.get("type") == "updateCheck" and e.get("current") == latest, 60,
-                               "the released version to check for updates")
-        check(again.get("available") is False, "the released version wants to update again: %s" % again)
-        errors = buddy.find_all("updateError")
-        check(not errors, "update errors: %s" % errors)
+        relaunch_index = buddy.events.index(relaunched)
+        old_errors = [e for e in buddy.events[:relaunch_index] if e.get("type") == "updateError"]
+        check(not old_errors, "the old copy reported update errors: %s" % old_errors)
+        if version_tuple(latest) >= version_tuple(FIRST_PAGE_FEED_VERSION):
+            again = buddy.wait_for(lambda e: e.get("type") in ("updateCheck", "updateError"), 60,
+                                   "the released version to check for updates", since=relaunch_index + 1)
+            check(again.get("type") == "updateCheck" and again.get("available") is False,
+                  "the released version could not confirm it is up to date: %s" % again)
+        else:
+            ctx.note("Den publicerade versionen %s frågar GitHubs API, som CI-maskinen inte får fråga utan inloggning "
+                     "(gränsen 60 anrop i timmen per adress); dess egen kontroll efter omstarten bedöms inte." % latest)
         ctx.note("Uppdatering från GitHub utan inloggning: %s → %s (den publicerade releasen), "
                  "nedladdad, kontrollerad, installerad och omstartad på %.0f s" % (OLD_VERSION, latest, time.time() - began))
         since = buddy.mark()
