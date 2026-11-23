@@ -104,6 +104,7 @@ USE_CASES = {
     "UC21": "Finns en nyare Buddy i Program öppnas den i stället för den nedladdade kopian",
     "UC22": "En äldre Buddy uppdaterar sig själv från den riktiga releasen på GitHub, utan inloggning",
     "UC23": "Kortkommandon fungerar i Buddys fönster: ⌘V klistrar in en API-nyckel och ⌘W stänger fönstret",
+    "UC24": "Med lyssnandet avstängt använder Buddy inte mikrofonen, ikonen i menyraden är överkryssad, och valet gäller även efter omstart",
 }
 SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts", "updates"]
 SETTINGS_TITLES = {"voice": "Röst", "ai": "AI", "listening": "Lyssna", "avatar": "Avatar",
@@ -687,6 +688,11 @@ def swedish_voice():
     return None
 
 
+def microphone_use(tools, pid):
+    """Core Audio's view: does the process record from an audio input right now?"""
+    return json.loads(run([str(tools["Probe"]), "mic", str(pid)], timeout=30).stdout)
+
+
 def window_list(tools):
     return json.loads(run([str(tools["Probe"]), "windows"], timeout=30).stdout)
 
@@ -711,8 +717,9 @@ def screenshot(path):
 
 
 class Buddy:
-    def __init__(self, args, workdir, mock_url, voice, extra_env=None, app=None):
+    def __init__(self, args, workdir, mock_url, voice, extra_env=None, app=None, listen_override=True):
         self.app = Path(app or args.app).resolve()
+        self.listen_override = listen_override
         self.mode = args.mode
         self.dir = workdir
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -741,7 +748,6 @@ class Buddy:
             "BUDDY_SET_screen": "main",
             "BUDDY_SET_avatarSize": str(AVATAR_SIZE),
             "BUDDY_SET_voiceProvider": "system",
-            "BUDDY_SET_listenOnLaunch": "1",
             "BUDDY_SET_triggerSilence": "0.8",
             "BUDDY_SET_replySilence": "1.2",
             "BUDDY_SET_idleTimeout": "90",
@@ -749,6 +755,8 @@ class Buddy:
             # Never ask the real GitHub for updates during the tests; T21 turns this on with a mock feed.
             "BUDDY_SET_autoUpdate": "0",
         }
+        if self.listen_override:
+            env["BUDDY_SET_listeningOn"] = "1"
         if self.mode == "live":
             env["BUDDY_ANTHROPIC_KEY"] = os.environ.get("ANTHROPIC_API_KEY", "")
         else:
@@ -1273,6 +1281,52 @@ def test_echo(ctx):
     ctx.note("Buddy pratade %d gånger; inget hördes medan Buddy pratade" % len(intervals))
 
 
+def wait_microphone(ctx, pid, wanted, timeout=10):
+    deadline = time.time() + timeout
+    state = microphone_use(ctx.tools, pid)
+    while state.get("runningInput") != wanted and time.time() < deadline:
+        time.sleep(0.5)
+        state = microphone_use(ctx.tools, pid)
+    return state
+
+
+@test("T27", "Med lyssnandet avstängt använder Buddy inte mikrofonen och ikonen är överkryssad", ["UC24"], modes=("audio",))
+def test_listening_off_releases_microphone(ctx):
+    buddy = ctx.buddy
+    buddy.ensure_listening()
+    pid = buddy.last("launch")["pid"]
+    on = wait_microphone(ctx, pid, True)
+    check(on.get("runningInput"), "Core Audio does not see Buddy recording while it listens: %s" % on)
+    since = buddy.mark()
+    buddy.command("listen", "0")
+    buddy.wait_type("listening", 15, since, on=False)
+    buddy.wait_type("inputStopped", 15, since)
+    off = wait_microphone(ctx, pid, False)
+    check(not off.get("runningInput"), "Buddy still records from the microphone with listening off: %s" % off)
+    icon = buddy.wait_type("statusIcon", 10, since)
+    check("slash" in icon.get("symbol", ""), "the menu bar icon is %s, not crossed out" % icon.get("symbol"))
+    time.sleep(3)
+    still = microphone_use(ctx.tools, pid)
+    check(not still.get("runningInput"), "Buddy started recording again by itself: %s" % still)
+    since = buddy.mark()
+    buddy.command("listen", "1")
+    buddy.wait_type("listening", 15, since, on=True)
+    buddy.wait_input_ready(20)
+    again = wait_microphone(ctx, pid, True)
+    check(again.get("runningInput"), "Buddy does not record again after listening was turned on: %s" % again)
+    icon = buddy.wait_type("statusIcon", 10, since)
+    check("slash" not in icon.get("symbol", ""), "the menu bar icon is still crossed out: %s" % icon.get("symbol"))
+    ctx.note("Mikrofonen enligt Core Audio: lyssnar → spelar in, lyssnandet av → spelar inte in, på igen → spelar in. "
+             "Ikonen när lyssnandet är av: %s" % StatusIconNote.symbol(buddy))
+
+
+class StatusIconNote:
+    @staticmethod
+    def symbol(buddy):
+        crossed = [e.get("symbol") for e in buddy.find_all("statusIcon") if "slash" in e.get("symbol", "")]
+        return crossed[-1] if crossed else "?"
+
+
 @test("T14", "Avslutas rent", ["UC1"], quits=True)
 def test_quit(ctx):
     buddy = ctx.buddy
@@ -1692,6 +1746,61 @@ def test_update_api_fallback(ctx):
         ctx.note("Reservvägen via API:t: uppdateringen hämtades när releasesidan inte svarade och installerades när Buddy avslutades")
     finally:
         releases.stop()
+        stop(ctx.buddy)
+
+
+@test("T28", "Lyssnar som standard; avstängt lyssnande gäller även efter omstart", ["UC24"], modes=("inject",), quits=True)
+def test_listening_choice_survives_restart(ctx):
+    base = ctx.out / "listening-restart"
+    shutil.rmtree(base, ignore_errors=True)
+
+    def start(keep):
+        extra = {"BUDDY_KEEP_SETTINGS": "1"} if keep else {}
+        buddy = Buddy(ctx.args, base, ctx.mock.url, ctx.buddy.voice, extra, listen_override=False)
+        ctx.buddy = buddy
+        buddy.launch()
+        launched = buddy.wait_type("launch", 40)
+        buddy.pid = launched.get("pid")
+        return buddy
+
+    def quit_buddy(buddy):
+        since = buddy.mark()
+        buddy.command("quit")
+        buddy.wait_type("terminate", 15, since)
+        deadline = time.time() + 10
+        while buddy.alive() and time.time() < deadline:
+            time.sleep(0.2)
+        buddy.pid = None
+
+    buddy = start(keep=False)
+    try:
+        first = buddy.wait_type("listening", 20)
+        check(first.get("on") is True, "Buddy does not listen by default: %s" % first)
+        since = buddy.mark()
+        buddy.command("listen", "0")
+        buddy.wait_type("listening", 15, since, on=False)
+        icon = buddy.wait_type("statusIcon", 10, since)
+        check("slash" in icon.get("symbol", ""), "the menu bar icon is %s, not crossed out" % icon.get("symbol"))
+        quit_buddy(buddy)
+
+        buddy = start(keep=True)
+        restored = buddy.wait_type("listening", 20)
+        check(restored.get("on") is False, "Buddy listens again after a restart although it was turned off: %s" % restored)
+        time.sleep(3)
+        check(not buddy.find_all("inputStarted"), "Buddy started its input after a restart with listening off")
+        icons = buddy.find_all("statusIcon")
+        check(icons and "slash" in icons[-1].get("symbol", ""), "the menu bar icon after the restart: %s" % icons)
+        since = buddy.mark()
+        buddy.command("listen", "1")
+        buddy.wait_type("listening", 15, since, on=True)
+        quit_buddy(buddy)
+
+        buddy = start(keep=True)
+        back = buddy.wait_type("listening", 20)
+        check(back.get("on") is True, "Buddy does not listen after a restart although it was turned back on: %s" % back)
+        ctx.note("Lyssnandet: på som standard, avstängt efter omstart när det stängts av, på igen när det slagits på")
+        quit_buddy(buddy)
+    finally:
         stop(ctx.buddy)
 
 

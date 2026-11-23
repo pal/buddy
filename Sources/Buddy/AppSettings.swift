@@ -53,7 +53,9 @@ final class AppSettings: ObservableObject {
 
     @Published var activeSessionID: String { didSet { save(activeSessionID, "activeSessionID") } }
     @Published var isFirstLaunch: Bool { didSet { defaults.set(!isFirstLaunch, forKey: "hasLaunched") } }
-    @Published var listenOnLaunch: Bool { didSet { save(listenOnLaunch, "listenOnLaunch") } }
+    /// Whether Buddy listens for trigger phrases. Remembered across restarts and updates, so
+    /// Buddy never starts listening by itself after it was turned off. On by default.
+    @Published var listeningOn: Bool { didSet { save(listeningOn, "listeningOn") } }
 
     // AI
     @Published var anthropicKey: String {
@@ -112,7 +114,9 @@ final class AppSettings: ObservableObject {
         let d: UserDefaults
         if options.isTesting {
             // Tests start from clean settings and never touch the user's own.
-            UserDefaults.standard.removePersistentDomain(forName: AppSettings.testDomain)
+            if !options.keepSettings {
+                UserDefaults.standard.removePersistentDomain(forName: AppSettings.testDomain)
+            }
             d = UserDefaults(suiteName: AppSettings.testDomain) ?? .standard
         } else {
             d = UserDefaults.standard
@@ -133,7 +137,8 @@ final class AppSettings: ObservableObject {
 
         activeSessionID = string("activeSessionID", "")
         isFirstLaunch = options.isTesting ? false : !d.bool(forKey: "hasLaunched")
-        listenOnLaunch = bool("listenOnLaunch", true)
+        // Earlier versions only had "listen when Buddy starts".
+        listeningOn = bool("listeningOn", bool("listenOnLaunch", true))
         anthropicKey = options.isTesting ? (options.anthropicKey ?? "") : Keychain.read("anthropic")
         claudeModel = string("claudeModel", ClaudeAPI.defaultModel)
         voiceProvider = VoiceProvider(rawValue: string("voiceProvider", "")) ?? .system
