@@ -1492,7 +1492,10 @@ def check_pane_layout(buddy, tab, since):
         layouts = [e for e in buddy.find_all("settingsPaneLayout") if e.get("tab") == tab]
     check(layouts, "the %s pane reported no layout" % tab)
     layout = layouts[-1]
-    check(layout["width"] <= layout["available"] + 1,
+    # SwiftUI's form lays rows with a slider out a couple of points wider than the content area
+    # (1 pt into each 32 pt margin, invisible). Anything more is content running past the edge,
+    # like the 8 to 100+ pt this check has caught.
+    check(layout["width"] <= layout["available"] + 4,
           "the %s pane is %.0f pt wide but only %.0f pt fit in the window" % (tab, layout["width"], layout["available"]))
 
 
