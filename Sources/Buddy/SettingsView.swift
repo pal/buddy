@@ -159,7 +159,39 @@ private struct Explained<Content: View>: View {
     }
 }
 
+/// One row of a pane: label on the left, content on the right. Every label in a pane takes the
+/// width of the pane's widest label, so the form gives every row's content the same width and
+/// wrapped text never runs past the window's edge (a columns form sizes each row's content by
+/// that row's own label).
+private struct Row<Content: View>: View {
+    let label: String
+    let labels: [String]
+    let content: Content
+
+    init(_ label: String, _ labels: [String], @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.labels = labels
+        self.content = content()
+    }
+
+    var body: some View {
+        LabeledContent {
+            content
+        } label: {
+            ZStack(alignment: .trailing) {
+                ForEach(labels, id: \.self) { other in
+                    Text(other).hidden()
+                }
+                Text(label)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+        }
+    }
+}
+
 private struct VoicePane: View {
+    private let labels = ["Talsyntes:", "Röst:", "Tempo:", "Tonhöjd:", "API-nyckel:", "Modell:", "Röst-id:", "Repliker:"]
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
 
@@ -174,7 +206,7 @@ private struct VoicePane: View {
 
     var body: some View {
         Form {
-            LabeledContent("Talsyntes:") {
+            Row("Talsyntes:", labels) {
                 VStack(alignment: .leading, spacing: 5) {
                     Picker("Talsyntes", selection: $settings.voiceProvider) {
                         ForEach(VoiceProvider.allCases) { provider in
@@ -190,7 +222,7 @@ private struct VoicePane: View {
             }
 
             if settings.voiceProvider == .system {
-                LabeledContent("Röst:") {
+                Row("Röst:", labels) {
                     Explained("Fler och bättre röster finns i Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster. Ladda ner en svensk röst i premium- eller förbättrad kvalitet.") {
                         Picker("Röst", selection: $settings.systemVoiceID) {
                             Text("Bästa tillgängliga för språket").tag("")
@@ -202,20 +234,20 @@ private struct VoicePane: View {
                         .fixedSize()
                     }
                 }
-                LabeledContent("Tempo:") {
+                Row("Tempo:", labels) {
                     RangeSlider(value: $settings.speechRate, range: 0.35...0.65, low: "Långsamt", high: "Snabbt")
                 }
-                LabeledContent("Tonhöjd:") {
+                Row("Tonhöjd:", labels) {
                     RangeSlider(value: $settings.speechPitch, range: 0.7...1.7, low: "Låg", high: "Hög")
                 }
             } else {
-                LabeledContent("API-nyckel:") {
+                Row("API-nyckel:", labels) {
                     Explained("Skaffa en nyckel på elevenlabs.io.") {
                         SecureField("API-nyckel", text: $settings.elevenLabsKey)
                             .labelsHidden()
                     }
                 }
-                LabeledContent("Modell:") {
+                Row("Modell:", labels) {
                     Explained("Eleven v4 Turbo låter naturligt och svarar snabbt. Ett svar från Buddy kostar ungefär en cent.") {
                         Picker("Modell", selection: $settings.elevenLabsModel) {
                             ForEach(ElevenLabsAPI.models) { option in
@@ -229,7 +261,7 @@ private struct VoicePane: View {
                         .fixedSize()
                     }
                 }
-                LabeledContent("Röst:") {
+                Row("Röst:", labels) {
                     Explained("Välj en röst som är inspelad på svenska.") {
                         HStack(spacing: 10) {
                             Text(voiceLabel)
@@ -240,8 +272,11 @@ private struct VoicePane: View {
                         }
                     }
                 }
-                TextField("Röst-id:", text: $settings.elevenLabsVoiceID)
-                LabeledContent("Repliker:") {
+                Row("Röst-id:", labels) {
+                    TextField("Röst-id", text: $settings.elevenLabsVoiceID)
+                        .labelsHidden()
+                }
+                Row("Repliker:", labels) {
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle("Buddy får skratta, sucka och viska (ljudtaggar)", isOn: $settings.elevenLabsAudioTags)
                             .disabled(!ElevenLabsAPI.supportsAudioTags(settings.elevenLabsModel))
@@ -270,19 +305,20 @@ private struct VoicePane: View {
 }
 
 private struct AIPane: View {
+    private let labels = ["API-nyckel:", "Modell:"]
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
     @State private var testResult = ""
 
     var body: some View {
         Form {
-            LabeledContent("API-nyckel:") {
+            Row("API-nyckel:", labels) {
                 Explained("Skaffa en nyckel på console.anthropic.com.") {
                     SecureField("API-nyckel", text: $settings.anthropicKey)
                         .labelsHidden()
                 }
             }
-            LabeledContent("Modell:") {
+            Row("Modell:", labels) {
                 Explained("Under en dialog skickas det du säger, och några minuter bakåt, till Claude. Snabbare modeller ger kortare väntan på scen.") {
                     Picker("Modell", selection: $settings.claudeModel) {
                         ForEach(ClaudeAPI.modelOptions) { option in
@@ -316,6 +352,7 @@ private struct AIPane: View {
 }
 
 private struct ListeningPane: View {
+    private let labels = ["Språk:", "Taligenkänning:", "Fraser:", "Paus före svar:", "Paus efter fråga:", "Går undan efter:"]
     @ObservedObject var settings: AppSettings
 
     private let languages: [(String, String)] = [
@@ -330,7 +367,7 @@ private struct ListeningPane: View {
 
     var body: some View {
         Form {
-            LabeledContent("Språk:") {
+            Row("Språk:", labels) {
                 Picker("Språk", selection: $settings.recognitionLocale) {
                     ForEach(languages, id: \.0) { language in
                         Text(language.1).tag(language.0)
@@ -339,7 +376,7 @@ private struct ListeningPane: View {
                 .labelsHidden()
                 .fixedSize()
             }
-            LabeledContent("Taligenkänning:") {
+            Row("Taligenkänning:", labels) {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("På datorn när det går (fungerar utan nätverk)", isOn: $settings.preferOnDevice)
                     Toggle("Börja lyssna när Buddy startar", isOn: $settings.listenOnLaunch)
@@ -347,22 +384,22 @@ private struct ListeningPane: View {
             }
 
             Section {
-                LabeledContent("Fraser:") {
+                Row("Fraser:", labels) {
                     Explained("Hur exakt trigger- och avslutsfraser måste sägas. Säg triggerfrasen tydligt och avsluta med en kort paus; i kontrollpanelen ser du vad Buddy hör.") {
                         RangeSlider(value: $settings.matchThreshold, range: 0.6...0.95, low: "Förlåtande", high: "Exakta")
                     }
                 }
-                LabeledContent("Paus före svar:") {
+                Row("Paus före svar:", labels) {
                     Explained("Hur länge Buddy väntar efter triggerfrasen.") {
                         ValueSlider(value: $settings.triggerSilence, range: 0.3...2.5, text: seconds(settings.triggerSilence))
                     }
                 }
-                LabeledContent("Paus efter fråga:") {
+                Row("Paus efter fråga:", labels) {
                     Explained("Tystnaden som betyder att du har pratat klart.") {
                         ValueSlider(value: $settings.replySilence, range: 0.6...3.5, text: seconds(settings.replySilence))
                     }
                 }
-                LabeledContent("Går undan efter:") {
+                Row("Går undan efter:", labels) {
                     ValueSlider(value: $settings.idleTimeout, range: 0...120, step: 5,
                                 text: settings.idleTimeout == 0 ? "aldrig" : "\(Int(settings.idleTimeout)) s tystnad")
                 }
@@ -372,12 +409,13 @@ private struct ListeningPane: View {
 }
 
 private struct AvatarPane: View {
+    private let labels = ["Hörn:", "Skärm:", "Storlek:", "Färg:", "Textning:"]
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
 
     var body: some View {
         Form {
-            LabeledContent("Hörn:") {
+            Row("Hörn:", labels) {
                 Picker("Hörn", selection: $settings.corner) {
                     ForEach(OverlayCorner.allCases) { corner in
                         Text(corner.label).tag(corner)
@@ -386,7 +424,7 @@ private struct AvatarPane: View {
                 .labelsHidden()
                 .fixedSize()
             }
-            LabeledContent("Skärm:") {
+            Row("Skärm:", labels) {
                 Explained("Avataren ligger över allt annat, även bildspel i helskärm. Syns den inte över Keynote: tillåt andra appar att använda skärmen under bildspel i Keynotes inställningar, eller spela upp bildspelet i ett fönster.") {
                     Picker("Skärm", selection: $settings.screen) {
                         ForEach(OverlayScreen.allCases) { screen in
@@ -397,10 +435,10 @@ private struct AvatarPane: View {
                     .fixedSize()
                 }
             }
-            LabeledContent("Storlek:") {
+            Row("Storlek:", labels) {
                 ValueSlider(value: $settings.avatarSize, range: 120...380, step: 10, text: "\(Int(settings.avatarSize)) pt")
             }
-            LabeledContent("Färg:") {
+            Row("Färg:", labels) {
                 HStack(spacing: 10) {
                     Slider(value: $settings.robotHue, in: 0...1)
                     Circle()
@@ -409,7 +447,7 @@ private struct AvatarPane: View {
                         .frame(width: 90, alignment: .leading)
                 }
             }
-            LabeledContent("Textning:") {
+            Row("Textning:", labels) {
                 Toggle("Visa det Buddy säger i en pratbubbla", isOn: $settings.showSubtitles)
             }
 
@@ -447,14 +485,17 @@ private struct ShortcutsPane: View {
 }
 
 private struct UpdatesPane: View {
+    private let labels = ["Version:", "Plats:", "Automatiskt:", "Status:", "Senast kontrollerat:"]
     @ObservedObject var updater: Updater
     @ObservedObject var settings: AppSettings
 
     var body: some View {
         Form {
-            LabeledContent("Version:", value: updater.currentVersion)
+            Row("Version:", labels) {
+                Text(updater.currentVersion)
+            }
             if !AppMover.isInstalled {
-                LabeledContent("Plats:") {
+                Row("Plats:", labels) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Buddy ligger inte i mappen Program.")
                         Button("Flytta till Program…") {
@@ -463,17 +504,19 @@ private struct UpdatesPane: View {
                     }
                 }
             }
-            LabeledContent("Automatiskt:") {
+            Row("Automatiskt:", labels) {
                 Explained("Buddy söker efter en ny version en gång om dygnet. Den måste vara signerad av Subtree Communications AB och notariserad av Apple, och installeras när Buddy inte har använts på 20 minuter eller när du avslutar Buddy, aldrig mitt i en dialog.") {
                     Toggle("Hämta och installera nya versioner", isOn: $settings.autoUpdate)
                 }
             }
-            LabeledContent("Status:") {
+            Row("Status:", labels) {
                 Text(updater.statusText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let lastCheck = updater.lastCheck {
-                LabeledContent("Senast kontrollerat:", value: lastCheck.formatted(date: .abbreviated, time: .shortened))
+                Row("Senast kontrollerat:", labels) {
+                    Text(lastCheck.formatted(date: .abbreviated, time: .shortened))
+                }
             }
 
             Section {
