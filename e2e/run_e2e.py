@@ -1509,11 +1509,11 @@ def test_settings_window(ctx):
         buddy.wait_type("settingsShown", 10, since, tab=tab)
         buddy.wait_type("settingsWindow", 10, since, tab=tab)
         time.sleep(1.0)  # SwiftUI lays out the pane and the window follows
+        screenshot(ctx.out / ("settings-%s.png" % tab))  # before the checks, so a failure leaves a picture
         event = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == tab][-1]
         check_settings_window(event, tab)
         check_pane_layout(buddy, tab, since)
         sizes.append("%s %.0f × %.0f" % (SETTINGS_TITLES[tab], event["frame"]["w"], event["frame"]["h"]))
-        screenshot(ctx.out / ("settings-%s.png" % tab))
     # The voice pane with the macOS voice instead of ElevenLabs: other controls, and the window follows.
     since = buddy.mark()
     buddy.command("settings", "voice")
@@ -1522,6 +1522,7 @@ def test_settings_window(ctx):
     since = buddy.mark()
     buddy.command("voiceProvider", "system")
     time.sleep(1.5)
+    screenshot(ctx.out / "settings-voice-macos.png")
     resized = [e for e in buddy.find_all("settingsWindow", since) if e.get("tab") == "voice"]
     check(resized, "the window did not follow the voice pane when the macOS voice was chosen")
     check_settings_window(resized[-1], "voice")
@@ -1529,7 +1530,6 @@ def test_settings_window(ctx):
     check(abs(resized[-1]["content"]["h"] - eleven_height) >= 10,
           "the window kept its height (%.0f pt) although the pane changed" % eleven_height)
     sizes.append("Röst med macOS-rösten %.0f × %.0f" % (resized[-1]["frame"]["w"], resized[-1]["frame"]["h"]))
-    screenshot(ctx.out / "settings-voice-macos.png")
     since = buddy.mark()
     buddy.command("voiceProvider", "elevenLabs")
     time.sleep(1.0)

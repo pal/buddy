@@ -118,6 +118,25 @@ private func seconds(_ value: Double) -> String {
     value.formatted(.number.precision(.fractionLength(1))) + " s"
 }
 
+/// A control with its explanation under it. Both sit in the form's control column, so the
+/// explanation wraps at the column's width.
+private struct Explained<Content: View>: View {
+    let note: String
+    let content: Content
+
+    init(_ note: String, @ViewBuilder content: () -> Content) {
+        self.note = note
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            content
+            Note(note)
+        }
+    }
+}
+
 private struct VoicePane: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
@@ -133,20 +152,34 @@ private struct VoicePane: View {
 
     var body: some View {
         Form {
-            Picker("Talsyntes:", selection: $settings.voiceProvider) {
-                ForEach(VoiceProvider.allCases) { provider in
-                    Text(provider.label).tag(provider)
+            LabeledContent("Talsyntes:") {
+                VStack(alignment: .leading, spacing: 5) {
+                    Picker("Talsyntes", selection: $settings.voiceProvider) {
+                        ForEach(VoiceProvider.allCases) { provider in
+                            Text(provider.label).tag(provider)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    if settings.voiceProvider == .elevenLabs {
+                        Note("Om ElevenLabs inte svarar används macOS-rösten.")
+                    }
                 }
             }
 
             if settings.voiceProvider == .system {
-                Picker("Röst:", selection: $settings.systemVoiceID) {
-                    Text("Bästa tillgängliga för språket").tag("")
-                    ForEach(SystemVoice.voices(for: settings.recognitionLocale), id: \.identifier) { voice in
-                        Text("\(voice.name) (\(SystemVoice.qualityLabel(voice)))").tag(voice.identifier)
+                LabeledContent("Röst:") {
+                    Explained("Fler och bättre röster finns i Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster. Ladda ner en svensk röst i premium- eller förbättrad kvalitet.") {
+                        Picker("Röst", selection: $settings.systemVoiceID) {
+                            Text("Bästa tillgängliga för språket").tag("")
+                            ForEach(SystemVoice.voices(for: settings.recognitionLocale), id: \.identifier) { voice in
+                                Text("\(voice.name) (\(SystemVoice.qualityLabel(voice)))").tag(voice.identifier)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
                     }
                 }
-                Note("Fler och bättre röster finns i Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster. Ladda ner en svensk röst i premium- eller förbättrad kvalitet.")
                 Slider(value: $settings.speechRate, in: 0.35...0.65) {
                     Text("Tempo:")
                 }
@@ -154,30 +187,46 @@ private struct VoicePane: View {
                     Text("Tonhöjd:")
                 }
             } else {
-                SecureField("API-nyckel:", text: $settings.elevenLabsKey)
-                Picker("Modell:", selection: $settings.elevenLabsModel) {
-                    ForEach(ElevenLabsAPI.models) { option in
-                        Text(option.label).tag(option.id)
+                LabeledContent("API-nyckel:") {
+                    Explained("Skaffa en nyckel på elevenlabs.io.") {
+                        SecureField("API-nyckel", text: $settings.elevenLabsKey)
+                            .labelsHidden()
                     }
-                    if !ElevenLabsAPI.models.contains(where: { $0.id == settings.elevenLabsModel }) {
-                        Text(settings.elevenLabsModel).tag(settings.elevenLabsModel)
+                }
+                LabeledContent("Modell:") {
+                    Explained("Eleven v4 Turbo låter naturligt och svarar snabbt. Ett svar från Buddy kostar ungefär en cent.") {
+                        Picker("Modell", selection: $settings.elevenLabsModel) {
+                            ForEach(ElevenLabsAPI.models) { option in
+                                Text(option.label).tag(option.id)
+                            }
+                            if !ElevenLabsAPI.models.contains(where: { $0.id == settings.elevenLabsModel }) {
+                                Text(settings.elevenLabsModel).tag(settings.elevenLabsModel)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
                     }
                 }
                 LabeledContent("Röst:") {
-                    HStack(spacing: 10) {
-                        Text(voiceLabel)
-                        Button("Välj röst…") {
-                            model.voicePickerOpen = true
+                    Explained("Välj en röst som är inspelad på svenska.") {
+                        HStack(spacing: 10) {
+                            Text(voiceLabel)
+                            Button("Välj röst…") {
+                                model.voicePickerOpen = true
+                            }
+                            .disabled(keyMissing)
                         }
-                        .disabled(keyMissing)
                     }
                 }
                 TextField("Röst-id:", text: $settings.elevenLabsVoiceID)
-                Toggle("Buddy får skratta, sucka och viska (ljudtaggar)", isOn: $settings.elevenLabsAudioTags)
-                    .disabled(!ElevenLabsAPI.supportsAudioTags(settings.elevenLabsModel))
-                Toggle("Förbered fasta repliker med Eleven v4 (högst kvalitet)", isOn: $settings.elevenLabsPreparedQuality)
-                    .disabled(ElevenLabsAPI.preparedModel(for: settings.elevenLabsModel) == settings.elevenLabsModel)
-                Note("Skaffa en API-nyckel på elevenlabs.io och välj en röst som är inspelad på svenska. Eleven v4 Turbo låter naturligt och svarar snabbt; ett svar från Buddy kostar ungefär en cent. Om ElevenLabs inte svarar används macOS-rösten.")
+                LabeledContent("Repliker:") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Buddy får skratta, sucka och viska (ljudtaggar)", isOn: $settings.elevenLabsAudioTags)
+                            .disabled(!ElevenLabsAPI.supportsAudioTags(settings.elevenLabsModel))
+                        Toggle("Förbered fasta repliker med Eleven v4 (högst kvalitet)", isOn: $settings.elevenLabsPreparedQuality)
+                            .disabled(ElevenLabsAPI.preparedModel(for: settings.elevenLabsModel) == settings.elevenLabsModel)
+                    }
+                }
             }
 
             Section {
@@ -205,16 +254,26 @@ private struct AIPane: View {
 
     var body: some View {
         Form {
-            SecureField("API-nyckel:", text: $settings.anthropicKey)
-            Picker("Modell:", selection: $settings.claudeModel) {
-                ForEach(ClaudeAPI.modelOptions) { option in
-                    Text(option.label).tag(option.id)
-                }
-                if !ClaudeAPI.modelOptions.contains(where: { $0.id == settings.claudeModel }) {
-                    Text(settings.claudeModel).tag(settings.claudeModel)
+            LabeledContent("API-nyckel:") {
+                Explained("Skaffa en nyckel på console.anthropic.com.") {
+                    SecureField("API-nyckel", text: $settings.anthropicKey)
+                        .labelsHidden()
                 }
             }
-            Note("Skaffa en nyckel på console.anthropic.com. Under en dialog skickas det du säger, och några minuter bakåt, till Claude. Snabbare modeller ger kortare väntan på scen.")
+            LabeledContent("Modell:") {
+                Explained("Under en dialog skickas det du säger, och några minuter bakåt, till Claude. Snabbare modeller ger kortare väntan på scen.") {
+                    Picker("Modell", selection: $settings.claudeModel) {
+                        ForEach(ClaudeAPI.modelOptions) { option in
+                            Text(option.label).tag(option.id)
+                        }
+                        if !ClaudeAPI.modelOptions.contains(where: { $0.id == settings.claudeModel }) {
+                            Text(settings.claudeModel).tag(settings.claudeModel)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
 
             Section {
                 HStack {
@@ -249,33 +308,50 @@ private struct ListeningPane: View {
 
     var body: some View {
         Form {
-            Picker("Språk:", selection: $settings.recognitionLocale) {
-                ForEach(languages, id: \.0) { language in
-                    Text(language.1).tag(language.0)
+            LabeledContent("Språk:") {
+                Picker("Språk", selection: $settings.recognitionLocale) {
+                    ForEach(languages, id: \.0) { language in
+                        Text(language.1).tag(language.0)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+            }
+            LabeledContent("Taligenkänning:") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("På datorn när det går (fungerar utan nätverk)", isOn: $settings.preferOnDevice)
+                    Toggle("Börja lyssna när Buddy startar", isOn: $settings.listenOnLaunch)
                 }
             }
-            Toggle("Känn igen tal på datorn när det går (fungerar utan nätverk)", isOn: $settings.preferOnDevice)
-            Toggle("Börja lyssna när Buddy startar", isOn: $settings.listenOnLaunch)
 
             Section {
-                Slider(value: $settings.matchThreshold, in: 0.6...0.95) {
-                    Text("Fraser:")
-                } minimumValueLabel: {
-                    Text("Förlåtande")
-                } maximumValueLabel: {
-                    Text("Exakta")
+                LabeledContent("Fraser:") {
+                    Explained("Hur exakt trigger- och avslutsfraser måste sägas. Säg triggerfrasen tydligt och avsluta med en kort paus; i kontrollpanelen ser du vad Buddy hör.") {
+                        HStack(spacing: 8) {
+                            Text("Förlåtande")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Slider(value: $settings.matchThreshold, in: 0.6...0.95)
+                            Text("Exakta")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 LabeledContent("Paus före svar:") {
-                    ValueSlider(value: $settings.triggerSilence, range: 0.3...2.5, text: seconds(settings.triggerSilence))
+                    Explained("Hur länge Buddy väntar efter triggerfrasen.") {
+                        ValueSlider(value: $settings.triggerSilence, range: 0.3...2.5, text: seconds(settings.triggerSilence))
+                    }
                 }
                 LabeledContent("Paus efter fråga:") {
-                    ValueSlider(value: $settings.replySilence, range: 0.6...3.5, text: seconds(settings.replySilence))
+                    Explained("Tystnaden som betyder att du har pratat klart.") {
+                        ValueSlider(value: $settings.replySilence, range: 0.6...3.5, text: seconds(settings.replySilence))
+                    }
                 }
                 LabeledContent("Går undan efter:") {
                     ValueSlider(value: $settings.idleTimeout, range: 0...120, step: 5,
                                 text: settings.idleTimeout == 0 ? "aldrig" : "\(Int(settings.idleTimeout)) s tystnad")
                 }
-                Note("Paus före svar är hur länge Buddy väntar efter triggerfrasen. Paus efter fråga är tystnaden som betyder att du har pratat klart. Säg triggerfrasen tydligt och avsluta med en kort paus. I kontrollpanelen ser du vad Buddy hör.")
             }
         }
     }
@@ -287,14 +363,24 @@ private struct AvatarPane: View {
 
     var body: some View {
         Form {
-            Picker("Hörn:", selection: $settings.corner) {
-                ForEach(OverlayCorner.allCases) { corner in
-                    Text(corner.label).tag(corner)
+            LabeledContent("Hörn:") {
+                Picker("Hörn", selection: $settings.corner) {
+                    ForEach(OverlayCorner.allCases) { corner in
+                        Text(corner.label).tag(corner)
+                    }
                 }
+                .labelsHidden()
+                .fixedSize()
             }
-            Picker("Skärm:", selection: $settings.screen) {
-                ForEach(OverlayScreen.allCases) { screen in
-                    Text(screen.label).tag(screen)
+            LabeledContent("Skärm:") {
+                Explained("Avataren ligger över allt annat, även bildspel i helskärm. Syns den inte över Keynote: tillåt andra appar att använda skärmen under bildspel i Keynotes inställningar, eller spela upp bildspelet i ett fönster.") {
+                    Picker("Skärm", selection: $settings.screen) {
+                        ForEach(OverlayScreen.allCases) { screen in
+                            Text(screen.label).tag(screen)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
             }
             LabeledContent("Storlek:") {
@@ -309,13 +395,14 @@ private struct AvatarPane: View {
                         .frame(width: 90, alignment: .leading)
                 }
             }
-            Toggle("Visa textning i en pratbubbla", isOn: $settings.showSubtitles)
+            LabeledContent("Textning:") {
+                Toggle("Visa det Buddy säger i en pratbubbla", isOn: $settings.showSubtitles)
+            }
 
             Section {
                 Button("Testa avataren") {
                     model.testAvatar()
                 }
-                Note("Avataren ligger över allt annat, även bildspel i helskärm. Syns den inte över Keynote: tillåt andra appar att använda skärmen under bildspel i Keynotes inställningar, eller spela upp bildspelet i ett fönster.")
             }
         }
     }
@@ -362,7 +449,11 @@ private struct UpdatesPane: View {
                     }
                 }
             }
-            Toggle("Uppdatera automatiskt", isOn: $settings.autoUpdate)
+            LabeledContent("Automatiskt:") {
+                Explained("Buddy söker efter en ny version en gång om dygnet. Den måste vara signerad av Subtree Communications AB och notariserad av Apple, och installeras när Buddy inte har använts på 20 minuter eller när du avslutar Buddy, aldrig mitt i en dialog.") {
+                    Toggle("Hämta och installera nya versioner", isOn: $settings.autoUpdate)
+                }
+            }
             LabeledContent("Status:") {
                 Text(updater.statusText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -383,7 +474,6 @@ private struct UpdatesPane: View {
                         }
                     }
                 }
-                Note("Buddy söker efter en ny version en gång om dygnet. Den laddas ner och kontrolleras: den måste vara signerad av Subtree Communications AB och notariserad av Apple. Den installeras när Buddy inte har använts på 20 minuter, eller när du avslutar Buddy, aldrig mitt i en dialog.")
             }
         }
     }
