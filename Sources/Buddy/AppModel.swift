@@ -33,7 +33,7 @@ final class AvatarState: ObservableObject {
 extension DirectorPhase {
     var label: String {
         switch self {
-        case .paused: return "pausad"
+        case .paused: return "lyssnar inte"
         case .listening: return "lyssnar efter triggers"
         case .triggered: return "hörde sitt namn"
         case .thinking: return "tänker"
@@ -205,10 +205,13 @@ final class AppModel: ObservableObject {
         if settings.anthropicKey.isEmpty {
             addLog("Tips: lägg in din Anthropic API-nyckel under Inställningar → AI.")
         }
-        if settings.listenOnLaunch {
+        if settings.listeningOn {
             Task { @MainActor in
-                await self.setListening(true)
+                await self.setListening(true, remember: false)
             }
+        } else {
+            addLog("Lyssnandet är avstängt. Slå på det i menyn eller med ⌃⌥⌘L.")
+            EventLog.shared.record("listening", ["on": false, "remembered": true])
         }
     }
 
@@ -242,7 +245,12 @@ final class AppModel: ObservableObject {
 
     // MARK: - Listening
 
-    func setListening(_ on: Bool) async {
+    /// Turns listening on or off. A choice by the user is remembered, also across restarts and
+    /// updates. Off means the microphone is not used at all.
+    func setListening(_ on: Bool, remember: Bool = true) async {
+        if remember {
+            settings.listeningOn = on
+        }
         if on {
             guard await ensurePermissions() else { return }
             listening = true

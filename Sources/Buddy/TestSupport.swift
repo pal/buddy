@@ -32,6 +32,9 @@ struct LaunchOptions {
     let commands: URL?
     /// Setting overrides from BUDDY_SET_<name>=<value>, e.g. BUDDY_SET_corner=bottomLeft.
     let settingOverrides: [String: String]
+    /// Keep the test settings from the previous run instead of starting clean
+    /// (BUDDY_KEEP_SETTINGS=1), to test what Buddy remembers across a restart.
+    let keepSettings: Bool
 
     init(environment: [String: String]) {
         func url(_ key: String) -> URL? {
@@ -54,6 +57,7 @@ struct LaunchOptions {
             overrides[String(key.dropFirst("BUDDY_SET_".count))] = value
         }
         settingOverrides = overrides
+        keepSettings = environment["BUDDY_KEEP_SETTINGS"] == "1"
     }
 
     static let current = LaunchOptions(environment: ProcessInfo.processInfo.environment)

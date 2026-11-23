@@ -68,7 +68,7 @@ struct SettingsPane: View {
         switch tab {
         case .voice: VoicePane(model: model, settings: settings)
         case .ai: AIPane(model: model, settings: settings)
-        case .listening: ListeningPane(settings: settings)
+        case .listening: ListeningPane(model: model, settings: settings)
         case .avatar: AvatarPane(model: model, settings: settings)
         case .shortcuts: ShortcutsPane()
         case .updates: UpdatesPane(updater: model.updater, settings: settings)
@@ -363,7 +363,8 @@ private struct AIPane: View {
 }
 
 private struct ListeningPane: View {
-    private let labels = ["Språk:", "Taligenkänning:", "Fraser:", "Paus före svar:", "Paus efter fråga:", "Går undan efter:"]
+    private let labels = ["Mikrofon:", "Språk:", "Taligenkänning:", "Fraser:", "Paus före svar:", "Paus efter fråga:", "Går undan efter:"]
+    @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
 
     private let languages: [(String, String)] = [
@@ -378,6 +379,18 @@ private struct ListeningPane: View {
 
     var body: some View {
         Form {
+            Row("Mikrofon:", labels) {
+                Explained("När lyssnandet är av använder Buddy inte mikrofonen, och ikonen i menyraden är överkryssad. Valet gäller tills du ändrar det, även efter omstart och uppdatering. Du slår på och av i menyn, med ⌃⌥⌘L eller här.") {
+                    Toggle("Lyssna efter triggerfraser", isOn: Binding(
+                        get: { model.listening },
+                        set: { on in
+                            Task { @MainActor in
+                                await model.setListening(on)
+                            }
+                        }
+                    ))
+                }
+            }
             Row("Språk:", labels) {
                 Picker("Språk", selection: $settings.recognitionLocale) {
                     ForEach(languages, id: \.0) { language in
@@ -388,10 +401,7 @@ private struct ListeningPane: View {
                 .fixedSize()
             }
             Row("Taligenkänning:", labels) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Toggle("På datorn när det går (fungerar utan nätverk)", isOn: $settings.preferOnDevice)
-                    Toggle("Börja lyssna när Buddy startar", isOn: $settings.listenOnLaunch)
-                }
+                Toggle("På datorn när det går (fungerar utan nätverk)", isOn: $settings.preferOnDevice)
             }
 
             Section {

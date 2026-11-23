@@ -92,7 +92,7 @@ Fraserna matchas förlåtande: versaler, skiljetecken och vanliga talspråksform
 |---|---|
 | ⌃⌥⌘ B | Starta nästa moment nu / avsluta dialogen |
 | ⌃⌥⌘ . | Tyst! Avbryt Buddys replik |
-| ⌃⌥⌘ L | Slå på/av lyssnandet |
+| ⌃⌥⌘ L | Slå på/av lyssnandet (av: mikrofonen används inte och ikonen i menyraden är överkryssad) |
 
 De fungerar även när presentationsprogrammet ligger överst.
 
@@ -127,6 +127,7 @@ Presentationer sparas som JSON i `~/Library/Application Support/Buddy/Sessions/`
 
 ## Integritet
 
+- Du kan ha Buddy igång utan att den lyssnar: välj **Lyssna efter triggerfraser** i menyn (eller tryck ⌃⌥⌘ L, eller slå av det under Inställningar → Lyssna). När lyssnandet är av använder Buddy inte mikrofonen alls, och ikonen i menyraden är överkryssad. Valet gäller tills du ändrar det, även efter omstart och automatisk uppdatering. Som standard lyssnar Buddy.
 - Taligenkänningen görs av Apple, på datorn om språket stöds, annars hos Apple.
 - Under en dialog skickas det du säger, och en del av det du sagt de senaste minuterna, till Anthropic (Claude). Mellan dialogerna skickas inget.
 - Med ElevenLabs skickas Buddys repliker dit för att göras om till tal.
@@ -140,7 +141,7 @@ make e2e        # hela appen, end-to-end, med inmatade repliker
 make e2e-audio  # hela appen med riktigt tal genom en virtuell mikrofon
 ```
 
-E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Sedan startas appen igen med ElevenLabs mot en låtsasserver som kontrollerar varje anrop och svarar med riktigt svenskt tal: en svensk röst väljs ur röstbiblioteket, Eleven v4 Turbo med ljudtaggar, fasta repliker förberedda med Eleven v4 och reserv till macOS-rösten. Till sist kontrolleras att Buddy uppdaterar sig själv: först till en signerad testversion från en låtsasserver, sedan från den riktiga releasen på GitHub, utan inloggning, precis som en installerad kopia. Testerna kontrollerar också att en kopia som startas från Hämtade filer flyttar sig till Program som Buddy.app och startar om därifrån. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude och ElevenLabs.
+E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Sedan startas appen igen med ElevenLabs mot en låtsasserver som kontrollerar varje anrop och svarar med riktigt svenskt tal: en svensk röst väljs ur röstbiblioteket, Eleven v4 Turbo med ljudtaggar, fasta repliker förberedda med Eleven v4 och reserv till macOS-rösten. Med riktig mikrofon kontrolleras också, med macOS ljudsystem (Core Audio), att Buddy slutar spela in när lyssnandet stängs av och börjar igen när det slås på, och att ett avstängt lyssnande fortfarande är avstängt efter en omstart. Till sist kontrolleras att Buddy uppdaterar sig själv: först till en signerad testversion från en låtsasserver, sedan från den riktiga releasen på GitHub, utan inloggning, precis som en installerad kopia. Testerna kontrollerar också att en kopia som startas från Hämtade filer flyttar sig till Program som Buddy.app och startar om därifrån. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude och ElevenLabs.
 
 `make e2e-audio` kräver den virtuella ljudenheten [BlackHole](https://github.com/ExistentialAudio/BlackHole) som standard för in- och utljud, och en svensk röst. I GitHub Actions körs båda varianterna vid varje push, i samma jobb som bygger appen, och `e2e/setup-ci.sh` förbereder maskinen. Resultat, skärmdumpar och loggar laddas upp som artefakten `e2e-results`. Finns repository-hemligheten `ANTHROPIC_API_KEY` körs dessutom ett test mot det riktiga Claude API:t.
 

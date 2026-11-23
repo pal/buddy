@@ -35,20 +35,52 @@ final class StatusBarController: NSObject {
         item.menu = buildMenu()
     }
 
+    /// Crossed out: Buddy is not listening and does not use the microphone.
+    static let notListeningSymbol = NSImage(systemSymbolName: "ear.slash", accessibilityDescription: nil) != nil
+        ? "ear.slash" : "mic.slash"
+
+    private var shownSymbol: String?
+
     private func updateIcon() {
         let symbol: String
         switch model.phase {
-        case .paused: symbol = "moon.zzz"
+        case .paused: symbol = StatusBarController.notListeningSymbol
         case .listening: symbol = "ear"
         case .triggered, .awaitingReply: symbol = "ear.badge.waveform"
         case .thinking: symbol = "ellipsis.bubble"
         case .speaking, .closing: symbol = "bubble.left.fill"
         }
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Buddy")
-            ?? NSImage(systemSymbolName: "face.smiling", accessibilityDescription: "Buddy")
+        let description = "Buddy – \(statusText)"
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+            ?? NSImage(systemSymbolName: "face.smiling", accessibilityDescription: description)
         image?.isTemplate = true
         item.button?.image = image
-        item.button?.toolTip = "Buddy – \(statusText)"
+        item.button?.toolTip = model.phase == .paused
+            ? "Buddy lyssnar inte och använder inte mikrofonen"
+            : description
+        if symbol != shownSymbol {
+            shownSymbol = symbol
+            recordIcon(symbol, image)
+        }
+    }
+
+    /// For the end-to-end tests: which icon is shown, and a picture of it.
+    private func recordIcon(_ symbol: String, _ image: NSImage?) {
+        guard EventLog.shared.isEnabled else { return }
+        EventLog.shared.record("statusIcon", ["symbol": symbol, "listening": model.listening, "phase": model.phase.rawValue])
+        guard let image, let folder = LaunchOptions.current.dataDirectory else { return }
+        let size = NSSize(width: 64, height: 64)
+        let picture = NSImage(size: size, flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            image.draw(in: rect.insetBy(dx: 8, dy: 8))
+            return true
+        }
+        if let tiff = picture.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? png.write(to: folder.appendingPathComponent("status-icon-\(symbol).png"))
+        }
     }
 
     private var statusText: String { model.phase.label }
@@ -71,7 +103,7 @@ final class StatusBarController: NSObject {
         }
         menu.addItem(.separator())
 
-        let listen = add(menu, "Lyssna efter triggers", #selector(toggleListening), key: "l")
+        let listen = add(menu, "Lyssna efter triggerfraser", #selector(toggleListening), key: "l")
         listen.state = model.listening ? .on : .off
 
         let active = model.phase.isActive

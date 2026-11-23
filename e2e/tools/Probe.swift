@@ -7,7 +7,11 @@
 //   Probe region <png> <screenWidthPoints> <x> <y> <w> <h> <r> <g> <b>
 //       Statistics for a region of a screenshot (points, top-left origin): how many
 //       pixels are close to the given color, and the average color.
+//   Probe mic <pid>
+//       Whether the process records from an audio input right now, according to Core Audio
+//       (the same information macOS uses for its microphone indicator).
 import AppKit
+import CoreAudio
 import CoreGraphics
 import Foundation
 
@@ -98,14 +102,50 @@ func regionStats(_ arguments: [String]) {
     ])
 }
 
+func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T) -> T? {
+    var address = AudioObjectPropertyAddress(
+        mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var value = initial
+    var size = UInt32(MemoryLayout<T>.size)
+    let status = withUnsafeMutablePointer(to: &value) { pointer in
+        AudioObjectGetPropertyData(object, &address, 0, nil, &size, pointer)
+    }
+    return status == noErr ? value : nil
+}
+
+func microphoneUse(_ arguments: [String]) {
+    guard arguments.count >= 3, let pid = Int32(arguments[2]) else { fail("usage: Probe mic <pid>") }
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyProcessObjectList, mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain)
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr else {
+        fail("could not list audio processes")
+    }
+    var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &objects) == noErr else {
+        fail("could not list audio processes")
+    }
+    for object in objects where property(object, kAudioProcessPropertyPID, pid_t(0)) == pid {
+        let input = property(object, kAudioProcessPropertyIsRunningInput, UInt32(0)) ?? 0
+        let output = property(object, kAudioProcessPropertyIsRunningOutput, UInt32(0)) ?? 0
+        emit(["pid": Int(pid), "known": true, "runningInput": input != 0, "runningOutput": output != 0])
+        return
+    }
+    // A process that has never used audio is not in the list.
+    emit(["pid": Int(pid), "known": false, "runningInput": false, "runningOutput": false])
+}
+
 @main
 enum Probe {
     static func main() {
         let arguments = CommandLine.arguments
-        guard arguments.count >= 2 else { fail("usage: Probe windows | region ...") }
+        guard arguments.count >= 2 else { fail("usage: Probe windows | region ... | mic <pid>") }
         switch arguments[1] {
         case "windows": listWindows()
         case "region": regionStats(arguments)
+        case "mic": microphoneUse(arguments)
         default: fail("unknown command \(arguments[1])")
         }
     }
