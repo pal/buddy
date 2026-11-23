@@ -42,7 +42,11 @@ final class Updater: ObservableObject {
         }
     }
 
-    static let defaultFeed = URL(string: "https://api.github.com/repos/pal/buddy/releases/latest")!
+    /// GitHub's page for the latest release. It redirects to the release's tag, and is not
+    /// subject to the API's limit of 60 requests an hour per network address.
+    static let defaultFeed = URL(string: "https://github.com/pal/buddy/releases/latest")!
+    /// The API, used if the page does not answer as expected. Versions up to 0.1.3 use only this.
+    static let defaultAPIFeed = URL(string: "https://api.github.com/repos/pal/buddy/releases/latest")!
 
     @Published private(set) var status: Status = .idle
     @Published private(set) var lastCheck: Date?
@@ -55,6 +59,7 @@ final class Updater: ObservableObject {
 
     private let settings: AppSettings
     private let feedURL: URL
+    private let apiFeedURL: URL
     private let bundleURL = Bundle.main.bundleURL
     private var timer: Timer?
     private var checking = false
@@ -65,6 +70,7 @@ final class Updater: ObservableObject {
         self.settings = settings
         currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
         feedURL = LaunchOptions.current.updateFeedURL ?? Updater.defaultFeed
+        apiFeedURL = LaunchOptions.current.updateAPIFeedURL ?? Updater.defaultAPIFeed
         lastCheck = settings.lastUpdateCheck
     }
 
@@ -128,10 +134,12 @@ final class Updater: ObservableObject {
         lastCheck = now
         settings.lastUpdateCheck = now
         do {
-            let release = try await fetchRelease()
+            let (release, source) = try await fetchRelease()
             let latest = release.version.description
             let newer = AppVersion(currentVersion).map { $0 < release.version } ?? false
-            EventLog.shared.record("updateCheck", ["current": currentVersion, "latest": latest, "available": newer])
+            EventLog.shared.record("updateCheck", [
+                "current": currentVersion, "latest": latest, "available": newer, "source": source,
+            ])
             guard newer else {
                 status = .upToDate
                 return
@@ -177,8 +185,29 @@ final class Updater: ObservableObject {
         return nil
     }
 
-    private func fetchRelease() async throws -> ReleaseInfo {
+    /// The latest release, from the release page or, if that fails, from the API.
+    private func fetchRelease() async throws -> (ReleaseInfo, String) {
+        do {
+            return (try await fetchFromReleasePage(), "page")
+        } catch {
+            EventLog.shared.record("updateFeedFallback", ["error": error.localizedDescription])
+            return (try await fetchFromAPI(), "api")
+        }
+    }
+
+    private func fetchFromReleasePage() async throws -> ReleaseInfo {
         var request = URLRequest(url: feedURL)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 20
+        request.setValue("Buddy-updater", forHTTPHeaderField: "User-Agent")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let finalURL = response.url else { throw UpdateError.http(status) }
+        return try ReleaseInfo.fromReleasePage(latestPage: feedURL, finalURL: finalURL)
+    }
+
+    private func fetchFromAPI() async throws -> ReleaseInfo {
+        var request = URLRequest(url: apiFeedURL)
         request.timeoutInterval = 20
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Buddy-updater", forHTTPHeaderField: "User-Agent")

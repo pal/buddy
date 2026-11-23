@@ -104,14 +104,17 @@ jobs:
       - name: Package
         run: ditto -c -k --keepParent build/Buddy.app build/Buddy.zip
 
+
       - uses: actions/upload-artifact@v4
         with:
           name: Buddy
           path: build/Buddy.zip
           retention-days: 14
 
-      # A newer, signed and notarized copy of the same app, for the e2e test of auto-update.
-      - name: Build update test app (99.0.0)
+      # Copies of the same app for the e2e tests of auto-update: a newer one, signed and
+      # notarized (99.0.0, served by a mock feed), and an older one (0.0.1) that updates
+      # itself from the real release on GitHub.
+      - name: Build update test apps (99.0.0 and 0.0.1)
         if: env.HAS_SIGNING == 'true'
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
@@ -124,9 +127,11 @@ jobs:
           VERSION=99.0.0 BUILD_NUMBER=9999 APP_PATH=build/update/Buddy.app scripts/build-app.sh
           scripts/notarize.sh build/update/Buddy.app
           ditto -c -k --keepParent build/update/Buddy.app build/update/Buddy.zip
+          VERSION=0.0.1 BUILD_NUMBER=1 APP_PATH=build/old/Buddy.app scripts/build-app.sh
 
       # End-to-end tests of the app bundle built above.
       - name: Prepare runner for e2e (virtual microphone, permissions)
+        id: prepare
         run: e2e/setup-ci.sh build/Buddy.app
 
       - name: E2E – injected speech
@@ -134,12 +139,12 @@ jobs:
         run: python3 e2e/run_e2e.py --mode inject --out build/e2e/inject
 
       - name: E2E – real speech through the microphone
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
         timeout-minutes: 20
         run: python3 e2e/run_e2e.py --mode audio --out build/e2e/audio
 
       - name: E2E – real Claude API
-        if: ${{ !cancelled() && env.ANTHROPIC_API_KEY != '' }}
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && env.ANTHROPIC_API_KEY != '' }}
         timeout-minutes: 10
         run: python3 e2e/run_e2e.py --mode live --out build/e2e/live
 
@@ -149,6 +154,17 @@ jobs:
           name: e2e-results
           path: build/e2e
           retention-days: 14
+
+      # What installed copies get when they look for updates: the release page and the API
+      # without credentials, the published Buddy.zip, its signature and Gatekeeper's verdict.
+      - name: Latest release, as installed copies see it
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          team=$(codesign -dv build/Buddy.app 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          [ "$team" = "not set" ] && team=""
+          scripts/check-release.sh "" "$team"
 
       # Only after every step above has passed, and only with a signed and notarized app.
       - name: Publish release
@@ -161,6 +177,15 @@ jobs:
             --title "Buddy $VERSION" \
             --generate-notes \
             --notes "Ladda ner Buddy.zip, packa upp den och öppna Buddy. Buddy erbjuder sig att flytta till Program och uppdaterar sig sedan själv. Appen är signerad med Developer ID (Subtree Communications AB) och notariserad av Apple."
+
+      # The new release, the way installed copies will get it.
+      - name: Check the published release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_SIGNING == 'true' && env.ALREADY_RELEASED != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          team=$(codesign -dv build/Buddy.app 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          scripts/check-release.sh "$VERSION" "$team"
 
       - name: Release that would be published
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'

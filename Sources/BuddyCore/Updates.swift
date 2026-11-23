@@ -72,6 +72,26 @@ public struct ReleaseInfo: Equatable, Sendable {
         else { throw ParseError.noArchive }
         return ReleaseInfo(version: version, tag: response.tag_name, archiveURL: url, pageURL: response.html_url.flatMap(URL.init(string:)))
     }
+
+    /// The latest release from GitHub's web page instead of the API, which allows only 60
+    /// requests an hour per network address without credentials. `https://github.com/OWNER/REPO/releases/latest`
+    /// redirects to `…/releases/tag/vX.Y.Z`, and the archive is at `…/releases/download/vX.Y.Z/Buddy.zip`.
+    /// - latestPage: the `…/releases/latest` address that was requested.
+    /// - finalURL: where the redirects ended.
+    public static func fromReleasePage(latestPage: URL, finalURL: URL, archiveName: String = "Buddy.zip") throws -> ReleaseInfo {
+        let parts = finalURL.path.split(separator: "/").map(String.init)
+        guard parts.count >= 2, parts[parts.count - 2] == "tag", let tag = parts.last?.removingPercentEncoding, !tag.isEmpty else {
+            throw ParseError.notAVersion(finalURL.absoluteString)
+        }
+        // A tag that is a version has only digits, dots and a leading "v": safe in a path.
+        guard let version = AppVersion(tag) else { throw ParseError.notAVersion(tag) }
+        guard latestPage.scheme == "https" || latestPage.host == "127.0.0.1" else { throw ParseError.noArchive }
+        let archive = latestPage.deletingLastPathComponent()
+            .appendingPathComponent("download")
+            .appendingPathComponent(tag, isDirectory: true)
+            .appendingPathComponent(archiveName)
+        return ReleaseInfo(version: version, tag: tag, archiveURL: archive, pageURL: finalURL)
+    }
 }
 
 /// When to look for and install updates.

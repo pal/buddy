@@ -16,8 +16,10 @@ struct LaunchOptions {
     let anthropicKey: String?
     /// ElevenLabs API base URL, e.g. a local mock server (BUDDY_ELEVENLABS_URL).
     let elevenLabsURL: URL?
-    /// Where Buddy looks for new releases instead of GitHub (BUDDY_UPDATE_FEED).
+    /// Release page Buddy checks instead of GitHub's, e.g. a local mock server (BUDDY_UPDATE_FEED).
     let updateFeedURL: URL?
+    /// Release API Buddy falls back to instead of GitHub's (BUDDY_UPDATE_API).
+    let updateAPIFeedURL: URL?
     /// Folder that stands in for /Applications, so the tests can check that Buddy moves itself
     /// there (BUDDY_APPLICATIONS_DIR). Buddy only offers to move while testing if this is set.
     let applicationsFolder: URL?
@@ -42,6 +44,7 @@ struct LaunchOptions {
         anthropicKey = environment["BUDDY_ANTHROPIC_KEY"]
         elevenLabsURL = url("BUDDY_ELEVENLABS_URL")
         updateFeedURL = url("BUDDY_UPDATE_FEED")
+        updateAPIFeedURL = url("BUDDY_UPDATE_API")
         applicationsFolder = url("BUDDY_APPLICATIONS_DIR")
         eventLog = url("BUDDY_EVENT_LOG")
         inbox = url("BUDDY_INBOX")
