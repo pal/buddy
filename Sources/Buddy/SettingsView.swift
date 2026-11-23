@@ -114,6 +114,26 @@ private struct ValueSlider: View {
     }
 }
 
+/// A slider with words for its two ends.
+private struct RangeSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let low: String
+    let high: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(low)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Slider(value: $value, in: range)
+            Text(high)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 private func seconds(_ value: Double) -> String {
     value.formatted(.number.precision(.fractionLength(1))) + " s"
 }
@@ -180,11 +200,11 @@ private struct VoicePane: View {
                         .fixedSize()
                     }
                 }
-                Slider(value: $settings.speechRate, in: 0.35...0.65) {
-                    Text("Tempo:")
+                LabeledContent("Tempo:") {
+                    RangeSlider(value: $settings.speechRate, range: 0.35...0.65, low: "Långsamt", high: "Snabbt")
                 }
-                Slider(value: $settings.speechPitch, in: 0.7...1.7) {
-                    Text("Tonhöjd:")
+                LabeledContent("Tonhöjd:") {
+                    RangeSlider(value: $settings.speechPitch, range: 0.7...1.7, low: "Låg", high: "Hög")
                 }
             } else {
                 LabeledContent("API-nyckel:") {
@@ -327,15 +347,7 @@ private struct ListeningPane: View {
             Section {
                 LabeledContent("Fraser:") {
                     Explained("Hur exakt trigger- och avslutsfraser måste sägas. Säg triggerfrasen tydligt och avsluta med en kort paus; i kontrollpanelen ser du vad Buddy hör.") {
-                        HStack(spacing: 8) {
-                            Text("Förlåtande")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Slider(value: $settings.matchThreshold, in: 0.6...0.95)
-                            Text("Exakta")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
+                        RangeSlider(value: $settings.matchThreshold, range: 0.6...0.95, low: "Förlåtande", high: "Exakta")
                     }
                 }
                 LabeledContent("Paus före svar:") {

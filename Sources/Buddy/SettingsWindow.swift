@@ -25,6 +25,7 @@ final class SettingsWindowController: NSWindowController {
         centerWhenShown = UserDefaults.standard.string(forKey: "NSWindow Frame \(autosaveName)") == nil
         window.setFrameAutosaveName(autosaveName)
         super.init(window: window)
+        window.delegate = self
         panes.onLayout = { [weak self] in self?.record() }
     }
 
@@ -146,6 +147,13 @@ final class SettingsWindowController: NSWindowController {
             "onActiveSpace": window.isOnActiveSpace,
             "editingText": window.firstResponder is NSText,
         ])
+    }
+}
+
+extension SettingsWindowController: NSWindowDelegate {
+    /// AppKit also resizes the window by itself when a pane's size changes.
+    func windowDidResize(_ notification: Notification) {
+        record()
     }
 }
 
