@@ -15,9 +15,9 @@ public enum ElevenLabsAPI {
     public static let outputFormat = "mp3_44100_128"
 
     public static let models: [ElevenLabsModel] = [
-        ElevenLabsModel(id: "eleven_v4_turbo", label: "Eleven v4 Turbo – uttrycksfull och snabb (rekommenderas)"),
-        ElevenLabsModel(id: "eleven_v4", label: "Eleven v4 – högst kvalitet, långsammare"),
-        ElevenLabsModel(id: "eleven_flash_v2_5", label: "Eleven Flash v2.5 – snabbast, mindre uttrycksfull"),
+        ElevenLabsModel(id: "eleven_v4_turbo", label: "Eleven v4 Turbo (rekommenderas)"),
+        ElevenLabsModel(id: "eleven_v4", label: "Eleven v4 (högst kvalitet, långsammare)"),
+        ElevenLabsModel(id: "eleven_flash_v2_5", label: "Eleven Flash v2.5 (snabbast)"),
         ElevenLabsModel(id: "eleven_multilingual_v2", label: "Eleven Multilingual v2"),
     ]
 
