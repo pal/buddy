@@ -114,7 +114,8 @@ private struct ValueSlider: View {
     }
 }
 
-/// A slider with words for its two ends.
+/// A slider with words for its two ends under it, as in System Settings. The slider comes
+/// first, so the form lines it up with the other controls.
 private struct RangeSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
@@ -122,14 +123,15 @@ private struct RangeSlider: View {
     let high: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(low)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
             Slider(value: $value, in: range)
-            Text(high)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            HStack {
+                Text(low)
+                Spacer()
+                Text(high)
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
         }
     }
 }
