@@ -92,6 +92,8 @@ final class AppModel: ObservableObject {
     var reportSettingsFields: (() -> Void)?
     /// End-to-end tests: the menu bar menu's items (set by the status bar controller).
     var reportStatusMenu: (() -> Void)?
+    /// End-to-end tests: Buddy's windows and where they are (set by the window manager).
+    var reportWindows: (() -> Void)?
     let updater: Updater
     /// Last time Buddy heard, said or was asked to do something (updates wait for a quiet spell).
     private(set) var lastActivityAt = Date()
@@ -743,6 +745,8 @@ final class AppModel: ObservableObject {
             settings.showInDock = on
         case "statusMenu":
             reportStatusMenu?()
+        case "windowState":
+            reportWindows?()
         case "snapshot":
             snapshotRobot(name: command.value ?? "snapshot")
         case "quit":

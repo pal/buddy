@@ -1367,10 +1367,23 @@ def test_dock_icon(ctx):
     run(["open", str(buddy.app)], timeout=30)
     reopened = buddy.wait_type("reopen", 15, since)
     check(reopened.get("openWindows") == [], "Buddy had windows open already: %s" % reopened.get("openWindows"))
-    window = buddy.wait_type("window", 10, since, id="control")
-    check(window.get("isVisible") and window.get("onActiveSpace"), "the control panel is not shown: %s" % window)
-    time.sleep(1.0)
+    buddy.wait_type("window", 10, since, id="control")
+    # Wait for macOS to finish activating Buddy (and any switch of spaces) before judging.
+    states = []
+    control = None
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        state = window_state(buddy)
+        states.append(state)
+        control = next((w for w in state.get("windows", []) if w.get("id") == "control"), None)
+        if control and control.get("isVisible") and control.get("onActiveSpace"):
+            break
+        time.sleep(0.5)
     screenshot(ctx.out / "reopen-control-panel.png")
+    on_screen = [w for w in window_list(ctx.tools) if w.get("owner") == "Buddy" and w.get("layer") == 0]
+    check(control and control.get("isVisible") and control.get("onActiveSpace"),
+          "the control panel is not where the user is looking after %d checks: first %s, last %s; Buddy's windows on screen: %s" % (
+              len(states), states[0] if states else None, states[-1] if states else None, on_screen))
     real_keys(ctx, "cmd+w")
     ctx.note("Dock-ikonen: på som standard, kan stängas av och slås på igen; att öppna Buddy igen visar kontrollpanelen.")
 
@@ -1801,6 +1814,12 @@ def test_real_keyboard_and_mouse(ctx):
              "(Buddy aktiv direkt: %s; klick som behövdes i fältet: %d): ⌘A ⌘V klistrar in API-nyckeln, skrivning hamnar i fältet, "
              "⌘C, ⌘X och ⌘V fungerar i röst-id-fältet och ⌘W stänger fönstret." % (
                  "ja" if opened.get("appActive") else "nej", clicks))
+
+
+def window_state(buddy):
+    since = buddy.mark()
+    buddy.command("windowState")
+    return buddy.wait_type("windowState", 10, since)
 
 
 def status_menu(buddy):
