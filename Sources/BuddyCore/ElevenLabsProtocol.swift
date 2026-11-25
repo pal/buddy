@@ -82,7 +82,8 @@ public enum ElevenLabsAPI {
         return "mp3"
     }
 
-    /// A readable message from an error response.
+    /// A readable message from an error response: what to do about it, in Swedish, for the errors
+    /// a user can fix, otherwise ElevenLabs' own message.
     public static func errorMessage(data: Data, status: Int) -> String {
         let prefix = "ElevenLabs svarade \(status)"
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -92,6 +93,10 @@ public enum ElevenLabsAPI {
         let detail = object["detail"]
         if let detail = detail as? [String: Any] {
             let message = (detail["message"] as? String) ?? (detail["status"] as? String) ?? ""
+            let codes = ["code", "status", "type"].compactMap { detail[$0] as? String }
+            if let explanation = explanation(codes: codes, message: message) {
+                return "\(explanation) (\(prefix))"
+            }
             return message.isEmpty ? prefix : "\(prefix): \(message)"
         }
         if let detail = detail as? String { return "\(prefix): \(detail)" }
@@ -101,6 +106,32 @@ public enum ElevenLabsAPI {
         }
         if let message = object["message"] as? String { return "\(prefix): \(message)" }
         return prefix
+    }
+
+    /// What the user can do about an error, for the errors that need them to act.
+    static func explanation(codes: [String], message: String) -> String? {
+        if codes.contains("paid_plan_required") {
+            if message.lowercased().contains("library voice") {
+                return "Med ElevenLabs gratisplan kan Buddy inte använda röster från Voice Library. "
+                    + "Välj en av ElevenLabs egna röster under Inställningar → Röst → Välj röst… → Mina röster, "
+                    + "eller byt till en betald plan på elevenlabs.io."
+            }
+            return "Det här kräver en betald ElevenLabs-plan: \(message)"
+        }
+        if codes.contains("missing_permissions") {
+            return "ElevenLabs-nyckeln saknar en behörighet som Buddy behöver: \(message) "
+                + "Skapa en nyckel med åtkomst till Text to Speech och Voices på elevenlabs.io."
+        }
+        if codes.contains("quota_exceeded") {
+            return "Krediterna på ElevenLabs-kontot räcker inte: \(message)"
+        }
+        if codes.contains("invalid_api_key") {
+            return "ElevenLabs godkänner inte API-nyckeln. Kontrollera den under Inställningar → Röst."
+        }
+        if codes.contains("voice_not_found") {
+            return "Rösten finns inte på ElevenLabs-kontot. Välj en röst under Inställningar → Röst → Välj röst…"
+        }
+        return nil
     }
 
     // MARK: Voices
@@ -122,6 +153,12 @@ public enum ElevenLabsAPI {
         public var previewURL: URL?
         public var isAddedByUser = false
         public var freeUsersAllowed = true
+        /// A voice from the shared Voice Library, or a copy of one in "My voices". ElevenLabs only
+        /// lets paid plans use these through the API.
+        public var fromLibrary = false
+
+        /// One of ElevenLabs' own voices, which every plan can use.
+        public var isPremade: Bool { category == "premade" }
 
         public init(id: String, name: String, publicOwnerID: String? = nil, originalVoiceID: String? = nil) {
             self.id = id
@@ -177,6 +214,7 @@ public enum ElevenLabsAPI {
     private struct MyVoicesResponse: Decodable {
         struct Item: Decodable {
             struct Sharing: Decodable {
+                let status: String?
                 let original_voice_id: String?
                 let public_owner_id: String?
             }
@@ -211,6 +249,7 @@ public enum ElevenLabsAPI {
             voice.previewURL = item.preview_url.flatMap(URL.init(string:))
             voice.isAddedByUser = item.is_added_by_user ?? false
             voice.freeUsersAllowed = item.free_users_allowed ?? true
+            voice.fromLibrary = true
             return voice
         }
     }
@@ -235,6 +274,7 @@ public enum ElevenLabsAPI {
             voice.category = item.category ?? ""
             voice.previewURL = item.preview_url.flatMap(URL.init(string:))
             voice.isAddedByUser = true
+            voice.fromLibrary = item.sharing?.status?.hasPrefix("copied") ?? false
             return voice
         }
     }

@@ -74,6 +74,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var listening = false
     @Published private(set) var progressStamp = 0
     @Published private(set) var problem: String?
+    /// Why ElevenLabs did not speak the last time Buddy asked it (Buddy then speaks with the
+    /// macOS voice), or nil.
+    @Published private(set) var voiceProblem: String?
+    /// When ElevenLabs last spoke for Buddy with the current settings.
+    @Published private(set) var voiceWorkedAt: Date?
     /// Selected pane in the settings window (remembered), and whether the voice picker is open.
     @Published var settingsTab: SettingsTab = .voice {
         didSet { settings.lastSettingsTab = settingsTab.rawValue }
@@ -85,6 +90,8 @@ final class AppModel: ObservableObject {
     var testEditShortcuts: (() -> Void)?
     /// End-to-end tests: where the settings window's text fields are and what they hold.
     var reportSettingsFields: (() -> Void)?
+    /// End-to-end tests: the menu bar menu's items (set by the status bar controller).
+    var reportStatusMenu: (() -> Void)?
     let updater: Updater
     /// Last time Buddy heard, said or was asked to do something (updates wait for a quiet spell).
     private(set) var lastActivityAt = Date()
@@ -159,6 +166,24 @@ final class AppModel: ObservableObject {
         player.onLog = { [weak self] message in
             self?.addLog(message)
         }
+        player.onElevenLabs = { [weak self] problem in
+            self?.elevenLabsResult(problem)
+        }
+        // Another key, voice, model or provider: what happened with the old ones no longer applies.
+        Publishers.MergeMany(
+            settings.$elevenLabsKey.map { _ in () }.eraseToAnyPublisher(),
+            settings.$elevenLabsVoiceID.map { _ in () }.eraseToAnyPublisher(),
+            settings.$elevenLabsModel.map { _ in () }.eraseToAnyPublisher(),
+            settings.$voiceProvider.map { _ in () }.eraseToAnyPublisher()
+        )
+        .dropFirst(4)
+        .sink { [weak self] in
+            guard let self, self.voiceProblem != nil || self.voiceWorkedAt != nil else { return }
+            self.voiceProblem = nil
+            self.voiceWorkedAt = nil
+            self.recordVoiceStatus()
+        }
+        .store(in: &cancellables)
         player.onSubtitle = { [weak self] text in
             self?.avatar.subtitle = text
             EventLog.shared.record("subtitle", ["text": text.map { $0 as Any } ?? NSNull()])
@@ -463,6 +488,26 @@ final class AppModel: ObservableObject {
 
     // MARK: - ElevenLabs voices
 
+    private func elevenLabsResult(_ problem: String?) {
+        let changed = problem != voiceProblem || (problem == nil && voiceWorkedAt == nil)
+        voiceProblem = problem
+        if problem == nil {
+            voiceWorkedAt = Date()
+        }
+        if changed {
+            recordVoiceStatus()
+        }
+    }
+
+    func recordVoiceStatus() {
+        EventLog.shared.record("voiceStatus", [
+            "provider": settings.voiceProvider.rawValue,
+            "ok": voiceProblem == nil && voiceWorkedAt != nil,
+            "problem": voiceProblem.map { $0 as Any } ?? NSNull(),
+            "checked": voiceProblem != nil || voiceWorkedAt != nil,
+        ])
+    }
+
     private var elevenLabsClient: ElevenLabsClient { ElevenLabsClient(apiKey: settings.elevenLabsKey) }
 
     /// Voices in the ElevenLabs Voice Library for the presentation language.
@@ -476,16 +521,43 @@ final class AppModel: ObservableObject {
         try await elevenLabsClient.myVoices()
     }
 
-    /// Makes a voice Buddy's voice. Library voices are added to "My voices" first.
-    func useElevenLabsVoice(_ voice: ElevenLabsAPI.Voice, fromLibrary: Bool) async throws {
+    /// Makes a voice Buddy's voice, once ElevenLabs has spoken a short sentence with it and the
+    /// chosen model, so a voice the account cannot use is never chosen. Library voices are added
+    /// to "My voices" first. Returns the sentence's audio, for the picker to play.
+    @discardableResult
+    func useElevenLabsVoice(_ voice: ElevenLabsAPI.Voice, fromLibrary: Bool) async throws -> URL {
         var id = voice.id
         if fromLibrary {
             id = try await elevenLabsClient.addLibraryVoice(voice)
         }
+        let sample: URL
+        do {
+            sample = try await renderVoiceSample(voiceID: id)
+        } catch {
+            addLog("\(voice.name) går inte att använda: \(error.localizedDescription)")
+            EventLog.shared.record("elevenLabsVoiceRejected", [
+                "voiceID": id, "name": voice.name, "fromLibrary": fromLibrary, "message": error.localizedDescription,
+            ])
+            throw error
+        }
         settings.elevenLabsVoiceID = id
         settings.elevenLabsVoiceName = voice.name
+        elevenLabsResult(nil)
         addLog("Röst för Buddy: \(voice.name)")
         EventLog.shared.record("elevenLabsVoiceSelected", ["voiceID": id, "name": voice.name, "fromLibrary": fromLibrary])
+        return sample
+    }
+
+    /// A short sentence in the presentation's language, spoken by ElevenLabs with a voice.
+    private func renderVoiceSample(voiceID: String) async throws -> URL {
+        let language = ElevenLabsAPI.languageCode(locale: settings.recognitionLocale)
+        let text = language == "sv" ? "Hej! Så här låter jag när jag pratar svenska." : "Hi! This is how I sound."
+        let audio = try await elevenLabsClient.speech(text, voiceID: voiceID, model: settings.elevenLabsModel, languageCode: language)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("buddy-voice-\(UUID().uuidString)")
+            .appendingPathExtension(audio.fileExtension)
+        try audio.data.write(to: url, options: .atomic)
+        return url
     }
 
     private func listElevenLabsVoicesForTest() {
@@ -509,8 +581,19 @@ final class AppModel: ObservableObject {
                 EventLog.shared.record("error", ["message": "no library voice \(id)"])
                 return
             }
+            _ = try? await self.useElevenLabsVoice(voice, fromLibrary: true)
+        }
+    }
+
+    /// As choosing a voice under "Mina röster" in the picker.
+    private func useMyVoiceForTest(id: String) {
+        Task { @MainActor in
             do {
-                try await self.useElevenLabsVoice(voice, fromLibrary: true)
+                guard let voice = try await self.elevenLabsMyVoices().first(where: { $0.id == id }) else {
+                    EventLog.shared.record("error", ["message": "no voice \(id) in My voices"])
+                    return
+                }
+                _ = try? await self.useElevenLabsVoice(voice, fromLibrary: false)
             } catch {
                 EventLog.shared.record("error", ["message": error.localizedDescription])
             }
@@ -652,6 +735,14 @@ final class AppModel: ObservableObject {
             listElevenLabsVoicesForTest()
         case "elevenUseVoice":
             useLibraryVoiceForTest(id: command.value ?? "")
+        case "elevenUseMyVoice":
+            useMyVoiceForTest(id: command.value ?? "")
+        case "voiceStatus":
+            recordVoiceStatus()
+        case "showInDock":
+            settings.showInDock = on
+        case "statusMenu":
+            reportStatusMenu?()
         case "snapshot":
             snapshotRobot(name: command.value ?? "snapshot")
         case "quit":

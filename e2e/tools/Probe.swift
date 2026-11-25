@@ -19,6 +19,9 @@
 //       pressed and released around the key as a person does.
 //   Probe type <text>
 //       Types text, one key press per character.
+//   Probe app <pid>
+//       How macOS sees a running app: its activation policy (regular = Dock icon) and
+//       whether it is the active app.
 import AppKit
 import ApplicationServices
 import CoreAudio
@@ -237,6 +240,19 @@ func typeText(_ arguments: [String]) {
     }
 }
 
+func appInfo(_ arguments: [String]) {
+    guard arguments.count == 3, let pid = Int32(arguments[2]) else { fail("usage: Probe app <pid>") }
+    guard let app = NSRunningApplication(processIdentifier: pid) else { fail("no app with pid \(pid)") }
+    let policy: String
+    switch app.activationPolicy {
+    case .regular: policy = "regular"
+    case .accessory: policy = "accessory"
+    case .prohibited: policy = "prohibited"
+    @unknown default: policy = "unknown"
+    }
+    emit(["activationPolicy": policy, "active": app.isActive, "bundleID": app.bundleIdentifier ?? ""])
+}
+
 @main
 enum Probe {
     static func main() {
@@ -250,6 +266,7 @@ enum Probe {
         case "click": click(arguments)
         case "keys": keys(arguments)
         case "type": typeText(arguments)
+        case "app": appInfo(arguments)
         default: fail("unknown command \(arguments[1])")
         }
     }

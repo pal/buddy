@@ -82,7 +82,7 @@ OUTPUT_FORMATS = {"mp3_22050_32", "mp3_24000_48", "mp3_44100_32", "mp3_44100_64"
                   "pcm_24000", "wav_16000", "wav_22050", "wav_24000"}
 
 USE_CASES = {
-    "UC1": "Ligger i bakgrunden som menyradsapp utan Dock-ikon",
+    "UC1": "Ligger i bakgrunden med en ikon i menyraden och i Dock (Dock-ikonen kan stängas av); ett klick på Dock-ikonen visar kontrollpanelen",
     "UC2": "Lyssnar via mikrofonen och reagerar inte på vanligt tal",
     "UC3": "En triggerfras startar en dialog",
     "UC4": "Avataren dyker upp i hörnet ovanpå en presentation i helskärm",
@@ -106,9 +106,10 @@ USE_CASES = {
     "UC22": "En äldre Buddy uppdaterar sig själv från den riktiga releasen på GitHub, utan inloggning",
     "UC23": "Kortkommandon fungerar i Buddys fönster med riktiga tangenttryck: ⌘A, ⌘C, ⌘X och ⌘V i textfälten, så att en API-nyckel kan klistras in, och ⌘W stänger fönstret",
     "UC24": "Med lyssnandet avstängt använder Buddy inte mikrofonen, ikonen i menyraden är överkryssad, och valet gäller även efter omstart",
+    "UC25": "Fungerar inte ElevenLabs med kontot säger Buddy varför och vad man kan göra, i inställningarna och i menyraden, och röstväljaren väljer bara röster som fungerar",
 }
-SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts", "updates"]
-SETTINGS_TITLES = {"voice": "Röst", "ai": "AI", "listening": "Lyssna", "avatar": "Avatar",
+SETTINGS_TABS = ["general", "voice", "ai", "listening", "avatar", "shortcuts", "updates"]
+SETTINGS_TITLES = {"general": "Allmänt", "voice": "Röst", "ai": "AI", "listening": "Lyssna", "avatar": "Avatar",
                    "shortcuts": "Kortkommandon", "updates": "Uppdateringar"}
 UPDATE_ZIP = ROOT / "build" / "update" / "Buddy.zip"
 UPDATE_VERSION = "99.0.0"
@@ -405,6 +406,8 @@ class MockElevenLabs:
         self.folder.mkdir(parents=True, exist_ok=True)
         self.requests = []
         self.fail_speech = 0
+        # As a free account: the API refuses Voice Library voices (the real answer, November 2026).
+        self.free_plan = False
         self.lock = threading.Lock()
         self.render_lock = threading.Lock()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
@@ -515,9 +518,19 @@ class MockElevenLabs:
                         failing = mock.fail_speech > 0
                         if failing:
                             mock.fail_speech -= 1
-                    self.record("speech", voice=voice_id, query=query, body=body, problems=problems, failed=failing)
+                        mine = next((v for v in mock.mine if v["voice_id"] == voice_id), None)
+                        library_copy = bool(mine and (mine.get("sharing") or {}).get("status") == "copied")
+                        refused = mock.free_plan and library_copy and not failing and not problems
+                    self.record("speech", voice=voice_id, query=query, body=body, problems=problems, failed=failing,
+                                status=402 if refused else None)
                     if failing:
                         self.reply(500, {"detail": {"status": "server_error", "message": "Mock ElevenLabs failure"}})
+                        return
+                    if refused:
+                        self.reply(402, {"detail": {
+                            "type": "payment_required", "code": "paid_plan_required",
+                            "message": "Free users cannot use library voices via the API. Please upgrade your subscription to use this voice.",
+                            "status": "payment_required", "request_id": uuid.uuid4().hex}})
                         return
                     if problems:
                         self.reply(422, {"detail": [{"loc": ["body"], "msg": "; ".join(problems)}]})
@@ -942,14 +955,14 @@ def await_reply(ctx, since, timeout=30):
                    timeout + 30, "Buddy to finish talking", since)
 
 
-@test("T01", "Startar som menyradsapp utan Dock-ikon med overlay redo", ["UC1", "UC13"])
+@test("T01", "Startar i bakgrunden med ikon i menyraden och i Dock, med overlay redo", ["UC1", "UC13"])
 def test_launch(ctx):
     buddy = ctx.buddy
     launch = buddy.wait_type("launch", 40)
     buddy.pid = launch.get("pid")
     ctx.screen = launch["screens"][0]
-    check(launch.get("activationPolicy") == "accessory",
-          "activation policy is %s, expected accessory (no Dock icon)" % launch.get("activationPolicy"))
+    check(launch.get("activationPolicy") == "regular",
+          "activation policy is %s, expected regular (a Dock icon)" % launch.get("activationPolicy"))
     status = buddy.wait_type("statusItem", 10)
     check(status.get("visible") and status.get("hasIcon"), "menu bar icon is not visible")
     check(launch.get("hotKeysRegistered") == 3, "only %s of 3 keyboard shortcuts registered" % launch.get("hotKeysRegistered"))
@@ -1326,6 +1339,40 @@ class StatusIconNote:
     def symbol(buddy):
         crossed = [e.get("symbol") for e in buddy.find_all("statusIcon") if "slash" in e.get("symbol", "")]
         return crossed[-1] if crossed else "?"
+
+
+@test("T31", "Ikonen i Dock kan stängas av och slås på igen; att öppna Buddy igen, som ett klick på Dock-ikonen, visar kontrollpanelen",
+      ["UC1"], modes=("inject",))
+def test_dock_icon(ctx):
+    buddy = ctx.buddy
+    pid = buddy.pid or buddy.last("launch")["pid"]
+
+    def policy():
+        return json.loads(probe(ctx, "app", pid).stdout)["activationPolicy"]
+
+    check(policy() == "regular", "macOS shows no Dock icon for Buddy (activation policy %s)" % policy())
+    since = buddy.mark()
+    buddy.command("showInDock", "0")
+    buddy.wait_type("dockIcon", 10, since, shown=False)
+    time.sleep(0.5)
+    check(policy() == "accessory", "the Dock icon stayed after it was turned off (%s)" % policy())
+    since = buddy.mark()
+    buddy.command("showInDock", "1")
+    buddy.wait_type("dockIcon", 10, since, shown=True)
+    time.sleep(0.5)
+    check(policy() == "regular", "the Dock icon did not come back (%s)" % policy())
+
+    # Opening Buddy again sends it the same reopen event as a click on its Dock icon.
+    since = buddy.mark()
+    run(["open", str(buddy.app)], timeout=30)
+    reopened = buddy.wait_type("reopen", 15, since)
+    check(reopened.get("openWindows") == [], "Buddy had windows open already: %s" % reopened.get("openWindows"))
+    window = buddy.wait_type("window", 10, since, id="control")
+    check(window.get("isVisible") and window.get("onActiveSpace"), "the control panel is not shown: %s" % window)
+    time.sleep(1.0)
+    screenshot(ctx.out / "reopen-control-panel.png")
+    real_keys(ctx, "cmd+w")
+    ctx.note("Dock-ikonen: på som standard, kan stängas av och slås på igen; att öppna Buddy igen visar kontrollpanelen.")
 
 
 @test("T14", "Avslutas rent", ["UC1"], quits=True)
@@ -1754,6 +1801,75 @@ def test_real_keyboard_and_mouse(ctx):
              "(Buddy aktiv direkt: %s; klick som behövdes i fältet: %d): ⌘A ⌘V klistrar in API-nyckeln, skrivning hamnar i fältet, "
              "⌘C, ⌘X och ⌘V fungerar i röst-id-fältet och ⌘W stänger fönstret." % (
                  "ja" if opened.get("appActive") else "nej", clicks))
+
+
+def status_menu(buddy):
+    since = buddy.mark()
+    buddy.command("statusMenu")
+    return buddy.wait_type("statusMenu", 10, since)
+
+
+@test("T30", "ElevenLabs gratisplan: Buddy säger varför rösten från Voice Library inte fungerar, i inställningarna och i menyraden, "
+      "och röstväljaren väljer bara röster som fungerar", ["UC25"], modes=("inject",))
+def test_eleven_free_plan(ctx):
+    start_elevenlabs_buddy(ctx)
+    buddy, eleven = ctx.buddy, ctx.eleven
+    buddy.ensure_listening()
+    eleven.free_plan = True
+    try:
+        # The voice chosen from the Voice Library in T15 stops working, as on a free account.
+        since = buddy.mark()
+        before = eleven.count()
+        buddy.command("testAvatar")
+        status = buddy.wait_for(lambda e: e.get("type") == "voiceStatus" and e.get("problem"), 30,
+                                "Buddy to report why ElevenLabs does not speak", since)
+        problem = status["problem"]
+        check("gratisplan" in problem and "Mina röster" in problem and "402" in problem,
+              "the explanation reads %r" % problem)
+        refused = [r for r in eleven.all("speech", before) if r.get("status") == 402]
+        check(refused, "ElevenLabs was not asked, or did not refuse the Voice Library voice")
+        buddy.wait_for(lambda e: e.get("type") == "tts" and e.get("fallback"), 20, "the macOS voice to take over", since)
+        buddy.wait_type("speechEnded", 30, since)
+        menu = status_menu(buddy)
+        check(any(t.startswith("⚠︎ ElevenLabs fungerar inte") for t in menu["items"]),
+              "the menu bar menu does not say that ElevenLabs fails: %s" % menu["items"])
+        check(any("gratisplan" in t for t in menu["toolTips"]), "the menu item does not tell why: %s" % menu["toolTips"])
+
+        since = buddy.mark()
+        buddy.command("settings", "voice")
+        buddy.wait_type("settingsShown", 10, since, tab="voice")
+        time.sleep(1.5)
+        screenshot(ctx.out / "settings-voice-problem.png")
+        check_pane_layout(buddy, "voice", since)
+
+        # Another Voice Library voice is tried, refused with the reason, and not chosen.
+        since = buddy.mark()
+        before = eleven.count()
+        buddy.command("elevenUseVoice", "lib-sv-2")
+        rejected = buddy.wait_type("elevenLabsVoiceRejected", 30, since)
+        check("gratisplan" in rejected.get("message", ""), "the picker's reason reads %r" % rejected.get("message"))
+        check([r for r in eleven.all("speech", before) if r.get("status") == 402], "the voice was not tried before it was chosen")
+        time.sleep(0.5)
+        check(not buddy.find_all("elevenLabsVoiceSelected", since), "a voice the account cannot use was chosen")
+
+        # One of ElevenLabs' own voices works on every plan: tried, chosen, and the warning goes away.
+        since = buddy.mark()
+        before = eleven.count()
+        buddy.command("elevenUseMyVoice", "premade-rachel")
+        selected = buddy.wait_type("elevenLabsVoiceSelected", 30, since)
+        check(selected.get("voiceID") == "premade-rachel", "selected %s" % selected)
+        tried = [r for r in eleven.all("speech", before) if r["voice"] == "premade-rachel"]
+        check(tried and not tried[0]["problems"] and tried[0].get("status") is None,
+              "the voice was not tried with a valid request before it was chosen: %s" % tried)
+        buddy.wait_type("voiceStatus", 10, since, ok=True)
+        menu = status_menu(buddy)
+        check(not any("ElevenLabs fungerar inte" in t for t in menu["items"]), "the warning stayed in the menu: %s" % menu["items"])
+        time.sleep(1.0)
+        screenshot(ctx.out / "settings-voice-ok.png")
+        ctx.note("ElevenLabs gratisplan (låtsasserver med ElevenLabs riktiga 402-svar): Buddy förklarar \"%s\"; "
+                 "en annan röst från Voice Library väljs inte; ElevenLabs egen röst provas och väljs." % problem)
+    finally:
+        eleven.free_plan = False
 
 
 @test("T20", "Avslutas rent (ElevenLabs)", ["UC1"], modes=("inject",), quits=True)

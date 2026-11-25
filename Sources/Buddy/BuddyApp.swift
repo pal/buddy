@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 @main
 enum BuddyApp {
@@ -7,7 +8,7 @@ enum BuddyApp {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        // Menu bar app: no Dock icon and no menu bar (the main menu only handles shortcuts).
+        // No Dock icon until the settings say whether Buddy has one (see AppDelegate.start).
         app.setActivationPolicy(.accessory)
         withExtendedLifetime(delegate) {
             app.run()
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlay: OverlayController?
     private var hotKeys: HotKeyCenter?
     private var mainMenu: MainMenu?
+    private var dockSetting: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A copy started from Downloads first offers to move itself to the Applications folder.
@@ -40,9 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.windows = windows
         overlay = OverlayController(avatar: model.avatar, settings: model.settings)
         statusBar = StatusBarController(model: model, windows: windows)
-        let mainMenu = MainMenu(model: model)
+        let mainMenu = MainMenu(model: model, windows: windows)
         mainMenu.install()
         self.mainMenu = mainMenu
+        showDockIcon(model.settings.showInDock)
+        dockSetting = model.settings.$showInDock
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] show in self?.showDockIcon(show) }
 
         let hotKeys = HotKeyCenter()
         let registered = [
@@ -58,6 +65,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.settings.isFirstLaunch = false
             windows.showEditor()
         }
+    }
+
+    /// A Dock icon and a place in ⌘-Tab, unless turned off in the settings. The menu bar icon is
+    /// always there.
+    private func showDockIcon(_ show: Bool) {
+        let policy: NSApplication.ActivationPolicy = show ? .regular : .accessory
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+        EventLog.shared.record("dockIcon", ["shown": show])
+    }
+
+    /// A click on the Dock icon, or opening Buddy again while it runs, shows a window: the
+    /// control panel, or Buddy's open windows. (The avatar's overlay counts as a visible window
+    /// for AppKit, so Buddy decides itself.)
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        let open = NSApp.windows.filter { $0.isVisible && $0.styleMask.contains(.titled) }
+        EventLog.shared.record("reopen", ["openWindows": open.map(\.title)])
+        if open.isEmpty {
+            windows?.showControlPanel()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            open.first?.makeKeyAndOrderFront(nil)
+        }
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -1,14 +1,16 @@
 import AppKit
 
-/// The app's main menu. A menu bar app shows no menu bar, but AppKit still uses these menus
-/// for the keyboard shortcuts in Buddy's windows: ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z in text fields
-/// (pasting an API key), ⌘W to close a window, ⌘, for the settings and ⌘Q to quit.
+/// The app's main menu: in the menu bar when Buddy is the active app and has a Dock icon, and
+/// in any case for the keyboard shortcuts in Buddy's windows: ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z in text
+/// fields (pasting an API key), ⌘W to close a window, ⌘, for the settings and ⌘Q to quit.
 @MainActor
 final class MainMenu: NSObject {
     private let model: AppModel
+    private let windows: WindowManager
 
-    init(model: AppModel) {
+    init(model: AppModel, windows: WindowManager) {
         self.model = model
+        self.windows = windows
         super.init()
     }
 
@@ -36,6 +38,9 @@ final class MainMenu: NSObject {
         let window = NSMenu(title: "Fönster")
         window.addItem(withTitle: "Stäng", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         window.addItem(withTitle: "Minimera", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        window.addItem(.separator())
+        window.addItem(withTitle: "Kontrollpanel", action: #selector(showControlPanel), keyEquivalent: "").target = self
+        window.addItem(withTitle: "Presentationer", action: #selector(showEditor), keyEquivalent: "").target = self
         add(window, to: main)
         NSApp.windowsMenu = window
 
@@ -50,6 +55,14 @@ final class MainMenu: NSObject {
 
     @objc private func showSettings() {
         model.showSettingsWindow?()
+    }
+
+    @objc private func showControlPanel() {
+        windows.showControlPanel()
+    }
+
+    @objc private func showEditor() {
+        windows.showEditor()
     }
 
     @objc private func quit() {

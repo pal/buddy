@@ -3,11 +3,12 @@ import SwiftUI
 import BuddyCore
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case voice, ai, listening, avatar, shortcuts, updates
+    case general, voice, ai, listening, avatar, shortcuts, updates
 
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .general: return "Allmänt"
         case .voice: return "Röst"
         case .ai: return "AI"
         case .listening: return "Lyssna"
@@ -19,6 +20,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     /// SF Symbol for the pane's toolbar button.
     var symbol: String {
         switch self {
+        case .general: return "gearshape"
         case .voice: return "speaker.wave.2"
         case .ai: return "sparkles"
         case .listening: return "mic"
@@ -66,6 +68,7 @@ struct SettingsPane: View {
 
     @ViewBuilder private var content: some View {
         switch tab {
+        case .general: GeneralPane(settings: settings)
         case .voice: VoicePane(model: model, settings: settings)
         case .ai: AIPane(model: model, settings: settings)
         case .listening: ListeningPane(model: model, settings: settings)
@@ -201,8 +204,51 @@ private struct Row<Content: View>: View {
     }
 }
 
+private struct GeneralPane: View {
+    private let labels = ["Dock:"]
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        Form {
+            Row("Dock:", labels) {
+                Explained("Buddy finns alltid i menyraden. Med ikonen i Dock hittar du Buddy också där och med ⌘-Tab. Klicka på den för att öppna kontrollpanelen.") {
+                    Toggle("Visa Buddy i Dock", isOn: $settings.showInDock)
+                }
+            }
+        }
+    }
+}
+
+/// Whether ElevenLabs speaks for Buddy, and if not, why and what to do.
+private struct VoiceStatus: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        if let problem = model.voiceProblem {
+            VStack(alignment: .leading, spacing: 5) {
+                Label {
+                    Text("ElevenLabs fungerar inte, så Buddy pratar med macOS-rösten.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                Note(problem)
+            }
+        } else if let worked = model.voiceWorkedAt {
+            Label {
+                Text("ElevenLabs fungerar (senast \(worked.formatted(date: .omitted, time: .shortened))).")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            }
+        } else {
+            Note("Inte provad än. Tryck på Testa rösten.")
+        }
+    }
+}
+
 private struct VoicePane: View {
-    private let labels = ["Talsyntes:", "Röst:", "Tempo:", "Tonhöjd:", "API-nyckel:", "Modell:", "Röst-id:", "Repliker:"]
+    private let labels = ["Talsyntes:", "Status:", "Röst:", "Tempo:", "Tonhöjd:", "API-nyckel:", "Modell:", "Röst-id:", "Repliker:"]
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
 
@@ -229,6 +275,12 @@ private struct VoicePane: View {
                     if settings.voiceProvider == .elevenLabs {
                         Note("Om ElevenLabs inte svarar används macOS-rösten.")
                     }
+                }
+            }
+
+            if settings.voiceProvider == .elevenLabs {
+                Row("Status:", labels) {
+                    VoiceStatus(model: model)
                 }
             }
 
