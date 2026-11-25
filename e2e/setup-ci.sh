@@ -2,7 +2,8 @@
 # Prepares a GitHub Actions macOS runner for Buddy's e2e tests:
 #  - a virtual audio device (BlackHole) as default input and output, so speech played
 #    with `say` reaches Buddy's microphone;
-#  - microphone and speech recognition permission for Buddy, so no dialogs appear.
+#  - microphone and speech recognition permission for Buddy, so no dialogs appear;
+#  - permission for the e2e tool (Probe) to click and type like a person.
 # Only for throwaway CI machines: it edits the user's privacy database.
 # Problems are reported as warnings; the e2e runs show what they lead to.
 set -uo pipefail
@@ -47,5 +48,17 @@ for SERVICE in kTCCServiceMicrophone kTCCServiceSpeechRecognition; do
   fi
 done
 sqlite3 "$DB" "SELECT service, client, auth_value FROM access WHERE client = '$BUNDLE_ID';" || true
+
+echo "== Permission for the e2e tool that clicks and types like a person"
+PROBE="$(cd "$(dirname "$0")/.." && pwd)/build/e2e-tools/Probe"
+SYSTEM_DB="/Library/Application Support/com.apple.TCC/TCC.db"
+for SERVICE in kTCCServiceAccessibility kTCCServicePostEvent; do
+  if sudo sqlite3 "$SYSTEM_DB" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags, last_modified) VALUES ('$SERVICE', '$PROBE', 1, 2, 4, 1, NULL, 0, $NOW);"; then
+    echo "Granted $SERVICE to $PROBE"
+  else
+    warn "Could not grant $SERVICE to the e2e tool (T29 reports what that leads to)"
+  fi
+done
+sudo killall tccd 2>/dev/null || true
 killall tccd 2>/dev/null || true
 exit 0

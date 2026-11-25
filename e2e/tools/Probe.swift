@@ -10,7 +10,17 @@
 //   Probe mic <pid>
 //       Whether the process records from an audio input right now, according to Core Audio
 //       (the same information macOS uses for its microphone indicator).
+//   Probe access
+//       Whether macOS lets this tool post keyboard and mouse events.
+//   Probe click <x> <y>
+//       A left click at a point (points, top-left origin), posted like a real mouse.
+//   Probe keys <key>...
+//       Key presses posted like a real keyboard, e.g. cmd+a cmd+v; the modifier keys are
+//       pressed and released around the key as a person does.
+//   Probe type <text>
+//       Types text, one key press per character.
 import AppKit
+import ApplicationServices
 import CoreAudio
 import CoreGraphics
 import Foundation
@@ -137,15 +147,109 @@ func microphoneUse(_ arguments: [String]) {
     emit(["pid": Int(pid), "known": false, "runningInput": false, "runningOutput": false])
 }
 
+// MARK: Real keyboard and mouse events
+
+/// Events from the HID system state, posted where the keyboard and the mouse post theirs, so
+/// macOS routes them to the active app and the window under the pointer like real ones.
+func source() -> CGEventSource? {
+    CGEventSource(stateID: .hidSystemState)
+}
+
+func post(_ event: CGEvent?, wait microseconds: useconds_t = 30_000) {
+    guard let event else { fail("could not create an event") }
+    event.post(tap: .cghidEventTap)
+    usleep(microseconds)
+}
+
+func access() {
+    emit(["postEvent": CGPreflightPostEventAccess(), "accessibility": AXIsProcessTrusted()])
+}
+
+func click(_ arguments: [String]) {
+    guard arguments.count == 4, let x = Double(arguments[2]), let y = Double(arguments[3]) else {
+        fail("usage: Probe click <x> <y>")
+    }
+    let point = CGPoint(x: x, y: y)
+    post(CGEvent(mouseEventSource: source(), mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left),
+         wait: 150_000)
+    for kind in [CGEventType.leftMouseDown, .leftMouseUp] {
+        let event = CGEvent(mouseEventSource: source(), mouseType: kind, mouseCursorPosition: point, mouseButton: .left)
+        event?.setIntegerValueField(.mouseEventClickState, value: 1)
+        post(event, wait: 80_000)
+    }
+}
+
+/// US layout key codes (the layout of the test machines).
+let keyCodes: [String: CGKeyCode] = [
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
+    "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38,
+    "k": 40, "n": 45, "m": 46, ",": 43, ".": 47, "return": 36, "tab": 48, "space": 49, "delete": 51,
+    "escape": 53, "left": 123, "right": 124, "down": 125, "up": 126,
+]
+
+let modifiers: [String: (code: CGKeyCode, flag: CGEventFlags)] = [
+    "cmd": (55, .maskCommand), "shift": (56, .maskShift), "opt": (58, .maskAlternate), "ctrl": (59, .maskControl),
+]
+
+func press(_ spec: String) {
+    var parts = spec.lowercased().split(separator: "+").map(String.init)
+    guard let key = parts.popLast(), let code = keyCodes[key] else { fail("unknown key in \(spec)") }
+    var held: [(code: CGKeyCode, flag: CGEventFlags)] = []
+    var flags: CGEventFlags = []
+    for name in parts {
+        guard let modifier = modifiers[name] else { fail("unknown modifier in \(spec)") }
+        flags.insert(modifier.flag)
+        held.append(modifier)
+        let down = CGEvent(keyboardEventSource: source(), virtualKey: modifier.code, keyDown: true)
+        down?.flags = flags
+        post(down)
+    }
+    for isDown in [true, false] {
+        let event = CGEvent(keyboardEventSource: source(), virtualKey: code, keyDown: isDown)
+        event?.flags = flags
+        post(event, wait: 60_000)
+    }
+    for modifier in held.reversed() {
+        flags.remove(modifier.flag)
+        let up = CGEvent(keyboardEventSource: source(), virtualKey: modifier.code, keyDown: false)
+        up?.flags = flags
+        post(up)
+    }
+}
+
+func keys(_ arguments: [String]) {
+    guard arguments.count >= 3 else { fail("usage: Probe keys <key>...") }
+    for spec in arguments.dropFirst(2) {
+        press(spec)
+        usleep(150_000)
+    }
+}
+
+func typeText(_ arguments: [String]) {
+    guard arguments.count == 3 else { fail("usage: Probe type <text>") }
+    for character in arguments[2].utf16 {
+        for isDown in [true, false] {
+            let event = CGEvent(keyboardEventSource: source(), virtualKey: 0, keyDown: isDown)
+            var unit = character
+            event?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            post(event, wait: 40_000)
+        }
+    }
+}
+
 @main
 enum Probe {
     static func main() {
         let arguments = CommandLine.arguments
-        guard arguments.count >= 2 else { fail("usage: Probe windows | region ... | mic <pid>") }
+        guard arguments.count >= 2 else { fail("usage: Probe windows | region ... | mic <pid> | access | click | keys | type") }
         switch arguments[1] {
         case "windows": listWindows()
         case "region": regionStats(arguments)
         case "mic": microphoneUse(arguments)
+        case "access": access()
+        case "click": click(arguments)
+        case "keys": keys(arguments)
+        case "type": typeText(arguments)
         default: fail("unknown command \(arguments[1])")
         }
     }
