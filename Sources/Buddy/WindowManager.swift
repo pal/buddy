@@ -14,6 +14,7 @@ final class WindowManager {
         model.showSettingsWindow = { [weak self] in self?.showSettings() }
         model.testEditShortcuts = { [weak self] in self?.settingsController().testEditShortcuts() }
         model.reportSettingsFields = { [weak self] in self?.settings?.recordFields() }
+        model.reportWindows = { [weak self] in self?.recordWindows() }
     }
 
     func showEditor() {
@@ -89,6 +90,27 @@ final class WindowManager {
         if frame != window.frame {
             window.setFrame(frame, display: false)
         }
+    }
+
+    /// For the end-to-end tests: every window of Buddy's and whether the user can see it.
+    func recordWindows() {
+        var all = windows.map { ($0.key, $0.value) }
+        if let window = settings?.window {
+            all.append(("settings", window))
+        }
+        EventLog.shared.record("windowState", [
+            "appActive": NSApp.isActive,
+            "frontmost": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
+            "windows": all.map { id, window in
+                [
+                    "id": id,
+                    "isVisible": window.isVisible,
+                    "onActiveSpace": window.isOnActiveSpace,
+                    "isKey": window.isKeyWindow,
+                    "frame": EventLog.frame(window.frame),
+                ] as [String: Any]
+            },
+        ])
     }
 
     private func record(_ id: String, _ window: NSWindow) {

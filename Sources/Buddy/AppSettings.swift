@@ -93,6 +93,8 @@ final class AppSettings: ObservableObject {
     @Published var screen: OverlayScreen { didSet { save(screen.rawValue, "screen") } }
     @Published var avatarSize: Double { didSet { save(avatarSize, "avatarSize") } }
     @Published var showSubtitles: Bool { didSet { save(showSubtitles, "showSubtitles") } }
+    /// A Dock icon and a place in ⌘-Tab, besides the menu bar icon. On by default.
+    @Published var showInDock: Bool { didSet { save(showInDock, "showInDock") } }
     @Published var robotHue: Double { didSet { save(robotHue, "robotHue") } }
 
     // Updates
@@ -161,6 +163,7 @@ final class AppSettings: ObservableObject {
         screen = OverlayScreen(rawValue: string("screen", "")) ?? .all
         avatarSize = double("avatarSize", 200)
         showSubtitles = bool("showSubtitles", true)
+        showInDock = bool("showInDock", true)
         robotHue = double("robotHue", 0.53)
         autoUpdate = bool("autoUpdate", true)
         lastSettingsTab = string("lastSettingsTab", "voice")

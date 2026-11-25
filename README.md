@@ -6,7 +6,7 @@ En liten AI-robot som sitter i hörnet av skärmen när du presenterar. Buddy ly
 
 ## Funktioner
 
-- Menyradsapp för macOS 13 eller senare (Apple silicon och Intel).
+- App för macOS 13 eller senare (Apple silicon och Intel) som ligger i bakgrunden, med en ikon i menyraden och i Dock.
 - Lyssnar med Apples taligenkänning, på svenska som standard.
 - Flera **moment** per presentation, vart och ett med egna triggerfraser, avslutsfraser och manus.
 - Två lägen per moment:
@@ -41,12 +41,12 @@ make install   # bygger, lägger Buddy i /Applications och startar
 
 En app du byggt själv signeras inte med Developer ID, men den har ingen karantänflagga, så macOS öppnar den ändå.
 
-Vid första start: tillåt mikrofon och taligenkänning när macOS frågar. Buddy syns som en ikon i menyraden (ingen ikon i Dock).
+Vid första start: tillåt mikrofon och taligenkänning när macOS frågar. Buddy har en ikon i menyraden och i Dock; klicka på Dock-ikonen för att öppna kontrollpanelen. Vill du bara ha ikonen i menyraden stänger du av **Visa Buddy i Dock** under Inställningar → Allmänt.
 
 ## Kom igång
 
 1. **Inställningar → AI**: klistra in en Anthropic API-nyckel från [console.anthropic.com](https://console.anthropic.com). Standardmodell är Claude Opus 5.5. Sonnet 5.5 och Haiku 5.5 svarar snabbare.
-2. **Inställningar → Röst**: välj ElevenLabs, klistra in en API-nyckel från [elevenlabs.io](https://elevenlabs.io) och tryck **Välj röst…**. Där kan du lyssna på svenska röster ur ElevenLabs Voice Library och välja en. Utan ElevenLabs används macOS-rösten; ladda då ner en svensk röst i premium- eller förbättrad kvalitet (Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster).
+2. **Inställningar → Röst**: välj ElevenLabs, klistra in en API-nyckel från [elevenlabs.io](https://elevenlabs.io) och tryck **Välj röst…**. Där kan du lyssna på svenska röster ur ElevenLabs Voice Library och på ElevenLabs egna röster, och välja en. När du väljer en röst säger den en mening, så att du hör hur den låter; en röst som inte fungerar med ditt konto väljs inte. Röster ur Voice Library kräver en betald ElevenLabs-plan; ElevenLabs egna röster fungerar med alla planer och talar svenska med Eleven v4. Utan ElevenLabs används macOS-rösten; ladda då ner en svensk röst i premium- eller förbättrad kvalitet (Systeminställningar → Hjälpmedel → Uppläst innehåll → Systemröst → Hantera röster).
 3. **Redigera presentationer**: en exempelpresentation finns redan. Ändra triggerfraser, avslutsfraser och moment.
 4. **Kontrollpanel**: skriv "Vad tycker du, Buddy?" och tryck Skicka för att testa utan mikrofon. Säg det sedan högt.
 
@@ -56,7 +56,7 @@ Med ElevenLabs är **Eleven v4 Turbo** förvalt: ElevenLabs mest uttrycksfulla m
 
 - **Ljudtaggar**: Claude får lägga in `[laughs]`, `[chuckles]`, `[sighs]`, `[whispers]`, `[excited]`, `[curious]`, `[mischievously]` och `[surprised]`, och rösten skrattar, suckar eller viskar. Taggarna syns inte i textningen. Du kan också skriva dem i dina egna repliker.
 - **Förbered repliker**: fasta repliker renderas med Eleven v4, den bästa modellen, och spelas sedan upp direkt från datorn.
-- Svarar inte ElevenLabs pratar Buddy vidare med macOS-rösten.
+- Svarar inte ElevenLabs pratar Buddy vidare med macOS-rösten. Varför står under Inställningar → Röst → Status och i menyn i menyraden.
 
 Modellerna Eleven v4 (högst kvalitet men långsammare) och Flash v2.5 (snabbast) finns också att välja.
 
@@ -143,7 +143,7 @@ make e2e        # hela appen, end-to-end, med inmatade repliker
 make e2e-audio  # hela appen med riktigt tal genom en virtuell mikrofon
 ```
 
-E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Sedan startas appen igen med ElevenLabs mot en låtsasserver som kontrollerar varje anrop och svarar med riktigt svenskt tal: en svensk röst väljs ur röstbiblioteket, Eleven v4 Turbo med ljudtaggar, fasta repliker förberedda med Eleven v4 och reserv till macOS-rösten. Med riktig mikrofon kontrolleras också, med macOS ljudsystem (Core Audio), att Buddy slutar spela in när lyssnandet stängs av och börjar igen när det slås på, och att ett avstängt lyssnande fortfarande är avstängt efter en omstart. Till sist kontrolleras att Buddy uppdaterar sig själv: först till en signerad testversion från en låtsasserver, sedan från den riktiga releasen på GitHub, utan inloggning, precis som en installerad kopia. Testerna kontrollerar också att en kopia som startas från Hämtade filer flyttar sig till Program som Buddy.app och startar om därifrån, och att textfälten i inställningarna går att använda med riktiga musklick och tangenttryck (⌘A, ⌘C, ⌘X, ⌘V och skrivning) när fönstret öppnas medan presentationen är aktiv app. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude och ElevenLabs.
+E2E-testerna (`e2e/run_e2e.py`) startar den riktiga `Buddy.app` bredvid en presentation i helskärm och kör alla användningsfall: Buddy i bakgrunden, triggerfraser, dialog med Claude (en lokal låtsasserver som också kontrollerar att varje anrop följer Claude API:t), svenskt tal med munrörelser, avataren ovanpå presentationen, avslutsfraser, flera moment, manusläge, reservrepliker och att Buddy inte hör sig själv. Sedan startas appen igen med ElevenLabs mot en låtsasserver som kontrollerar varje anrop och svarar med riktigt svenskt tal: en svensk röst väljs ur röstbiblioteket, Eleven v4 Turbo med ljudtaggar, fasta repliker förberedda med Eleven v4 och reserv till macOS-rösten. Med ett gratiskonto, där låtsasservern svarar som ElevenLabs riktiga API (402 för röster ur Voice Library), kontrolleras att Buddy förklarar varför i inställningarna och i menyraden och att röstväljaren bara väljer röster som fungerar. Med riktig mikrofon kontrolleras också, med macOS ljudsystem (Core Audio), att Buddy slutar spela in när lyssnandet stängs av och börjar igen när det slås på, och att ett avstängt lyssnande fortfarande är avstängt efter en omstart. Till sist kontrolleras att Buddy uppdaterar sig själv: först till en signerad testversion från en låtsasserver, sedan från den riktiga releasen på GitHub, utan inloggning, precis som en installerad kopia. Testerna kontrollerar också att en kopia som startas från Hämtade filer flyttar sig till Program som Buddy.app och startar om därifrån, och att textfälten i inställningarna går att använda med riktiga musklick och tangenttryck (⌘A, ⌘C, ⌘X, ⌘V och skrivning) när fönstret öppnas medan presentationen är aktiv app. Resultatet hamnar i `build/e2e/<läge>/report.md` tillsammans med skärmdumpar, händelselogg och anropen till Claude och ElevenLabs.
 
 `make e2e-audio` kräver den virtuella ljudenheten [BlackHole](https://github.com/ExistentialAudio/BlackHole) som standard för in- och utljud, och en svensk röst. I GitHub Actions körs båda varianterna vid varje push, i samma jobb som bygger appen, och `e2e/setup-ci.sh` förbereder maskinen. Resultat, skärmdumpar och loggar laddas upp som artefakten `e2e-results`. Finns repository-hemligheten `ANTHROPIC_API_KEY` körs dessutom ett test mot det riktiga Claude API:t.
 

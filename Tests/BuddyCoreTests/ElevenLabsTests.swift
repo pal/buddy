@@ -64,13 +64,31 @@ final class ElevenLabsProtocolTests: XCTestCase {
 
     func testErrorMessages() {
         let quota = Data(#"{"detail":{"status":"quota_exceeded","message":"You have 0 credits left."}}"#.utf8)
-        XCTAssertEqual(ElevenLabsAPI.errorMessage(data: quota, status: 401), "ElevenLabs svarade 401: You have 0 credits left.")
+        XCTAssertEqual(ElevenLabsAPI.errorMessage(data: quota, status: 401),
+                       "Krediterna på ElevenLabs-kontot räcker inte: You have 0 credits left. (ElevenLabs svarade 401)")
+        let other = Data(#"{"detail":{"status":"something_new","message":"Try again."}}"#.utf8)
+        XCTAssertEqual(ElevenLabsAPI.errorMessage(data: other, status: 400), "ElevenLabs svarade 400: Try again.")
         let plain = Data(#"{"detail":"Not Found"}"#.utf8)
         XCTAssertEqual(ElevenLabsAPI.errorMessage(data: plain, status: 404), "ElevenLabs svarade 404: Not Found")
         let validation = Data(#"{"detail":[{"loc":["body","text"],"msg":"field required"}]}"#.utf8)
         XCTAssertEqual(ElevenLabsAPI.errorMessage(data: validation, status: 422), "ElevenLabs svarade 422: field required")
         XCTAssertEqual(ElevenLabsAPI.errorMessage(data: Data("Bad gateway".utf8), status: 502), "ElevenLabs svarade 502: Bad gateway")
         XCTAssertEqual(ElevenLabsAPI.errorMessage(data: Data(), status: 500), "ElevenLabs svarade 500")
+    }
+
+    /// The answers the real API gave a free account's key (November 2026).
+    func testExplainsWhatTheUserCanDoAboutRealErrors() {
+        let libraryVoice = Data(#"{"detail":{"type":"payment_required","code":"paid_plan_required","message":"Free users cannot use library voices via the API. Please upgrade your subscription to use this voice.","status":"payment_required","request_id":"04be4269d752745ba8f02d7dab4f7d30"}}"#.utf8)
+        let message = ElevenLabsAPI.errorMessage(data: libraryVoice, status: 402)
+        XCTAssertTrue(message.hasPrefix("Med ElevenLabs gratisplan kan Buddy inte använda röster från Voice Library."), message)
+        XCTAssertTrue(message.contains("Mina röster"), message)
+        XCTAssertTrue(message.hasSuffix("(ElevenLabs svarade 402)"), message)
+        let permission = Data(#"{"detail":{"type":"authentication_error","code":"unauthorized","message":"The API key you used is missing the permission text_to_speech to execute this operation.","status":"missing_permissions","request_id":"x"}}"#.utf8)
+        let missing = ElevenLabsAPI.errorMessage(data: permission, status: 401)
+        XCTAssertTrue(missing.hasPrefix("ElevenLabs-nyckeln saknar en behörighet som Buddy behöver: The API key you used is missing the permission text_to_speech"), missing)
+        let otherPaid = Data(#"{"detail":{"code":"paid_plan_required","message":"This output format needs a Pro plan.","status":"payment_required"}}"#.utf8)
+        XCTAssertEqual(ElevenLabsAPI.errorMessage(data: otherPaid, status: 402),
+                       "Det här kräver en betald ElevenLabs-plan: This output format needs a Pro plan. (ElevenLabs svarade 402)")
     }
 
     func testParsesLibraryVoices() throws {
@@ -97,6 +115,7 @@ final class ElevenLabsProtocolTests: XCTestCase {
         XCTAssertTrue(sanna.isSwedish)
         XCTAssertTrue(sanna.isAddedByUser)
         XCTAssertFalse(sanna.freeUsersAllowed)
+        XCTAssertTrue(sanna.fromLibrary)
         XCTAssertEqual(sanna.details, "female · young · swedish · conversational")
         XCTAssertEqual(voices[1].name, "Erik")
         XCTAssertFalse(voices[1].isAddedByUser)
@@ -119,6 +138,10 @@ final class ElevenLabsProtocolTests: XCTestCase {
         XCTAssertEqual(mine[0].accent, "american")
         XCTAssertEqual(mine[1].accent, "", "labels with other types are ignored instead of failing")
         XCTAssertEqual(mine[1].originalVoiceID, "lib1")
+        XCTAssertTrue(mine[0].isPremade)
+        XCTAssertFalse(mine[0].fromLibrary)
+        XCTAssertTrue(mine[1].fromLibrary, "a copy of a Voice Library voice")
+        XCTAssertFalse(mine[1].isPremade)
         let library = ElevenLabsAPI.Voice(id: "lib1", name: "Sanna", publicOwnerID: "owner1")
         XCTAssertEqual(ElevenLabsAPI.copy(of: library, in: mine)?.id, "copy1")
         XCTAssertNil(ElevenLabsAPI.copy(of: ElevenLabsAPI.Voice(id: "lib9", name: "X"), in: mine))

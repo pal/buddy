@@ -28,6 +28,21 @@ final class VoicePreviewPlayer: ObservableObject {
         newPlayer.play()
     }
 
+    /// Plays a sentence ElevenLabs rendered with a voice.
+    func play(file url: URL, id: String) {
+        stop()
+        let item = AVPlayerItem(url: url)
+        observer = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.stop() }
+        }
+        let newPlayer = AVPlayer(playerItem: item)
+        player = newPlayer
+        playingID = id
+        newPlayer.play()
+    }
+
     func stop() {
         player?.pause()
         player = nil
@@ -52,7 +67,7 @@ struct ElevenLabsVoicePicker: View {
         var label: String {
             switch self {
             case .library: return "Svenska röster (Voice Library)"
-            case .mine: return "Mina röster"
+            case .mine: return "Mina röster och ElevenLabs egna"
             }
         }
     }
@@ -85,6 +100,12 @@ struct ElevenLabsVoicePicker: View {
                         .controlSize(.small)
                 }
             }
+            if source == .library {
+                Text("Röster från Voice Library kan Buddy bara använda med en betald ElevenLabs-plan. ElevenLabs egna röster, under Mina röster och ElevenLabs egna, fungerar med alla planer.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let message {
                 Text(message)
                     .font(.caption)
@@ -95,7 +116,7 @@ struct ElevenLabsVoicePicker: View {
                 row(voice)
             }
             .frame(minHeight: 300)
-            Text("Lyssna på några röster och välj en som är inspelad på svenska. Röster från Voice Library läggs till under Mina röster på ditt ElevenLabs-konto.")
+            Text("Lyssna på några röster och välj en. När du väljer en röst säger den en mening med den modell du har valt, så att du hör hur den låter. En röst som inte fungerar med ditt konto väljs inte. Röster från Voice Library läggs till under Mina röster på ditt ElevenLabs-konto.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -155,8 +176,12 @@ struct ElevenLabsVoicePicker: View {
                         .font(.caption)
                         .lineLimit(2)
                 }
-                if !voice.freeUsersAllowed {
-                    Text("Kräver en betald ElevenLabs-plan")
+                if voice.isPremade {
+                    Text("ElevenLabs egen röst, fungerar med alla planer")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                } else if voice.fromLibrary, source == .mine {
+                    Text("Från Voice Library, kräver en betald ElevenLabs-plan")
                         .font(.caption2)
                         .foregroundColor(.orange)
                 }
@@ -206,12 +231,13 @@ struct ElevenLabsVoicePicker: View {
         let fromLibrary = source == .library
         Task { @MainActor in
             do {
-                try await model.useElevenLabsVoice(voice, fromLibrary: fromLibrary)
-                if fromLibrary, let updated = try? await model.elevenLabsMyVoices() {
-                    mine = updated
-                }
+                let sample = try await model.useElevenLabsVoice(voice, fromLibrary: fromLibrary)
+                preview.play(file: sample, id: voice.id)
             } catch {
-                message = error.localizedDescription
+                message = "\(voice.name) går inte att använda: \(error.localizedDescription)"
+            }
+            if fromLibrary, let updated = try? await model.elevenLabsMyVoices() {
+                mine = updated
             }
             choosing = nil
         }

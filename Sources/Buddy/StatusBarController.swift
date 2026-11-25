@@ -21,6 +21,14 @@ final class StatusBarController: NSObject {
             "hasIcon": item.button?.image != nil,
             "menuItems": item.menu?.items.map(\.title) ?? [],
         ])
+        model.reportStatusMenu = { [weak self] in
+            guard let self else { return }
+            self.refresh()
+            EventLog.shared.record("statusMenu", [
+                "items": self.item.menu?.items.map(\.title) ?? [],
+                "toolTips": self.item.menu?.items.compactMap(\.toolTip) ?? [],
+            ])
+        }
         model.objectWillChange
             .merge(with: model.store.objectWillChange, model.updater.objectWillChange)
             .receive(on: DispatchQueue.main)
@@ -100,6 +108,10 @@ final class StatusBarController: NSObject {
             let problemItem = NSMenuItem(title: "⚠︎ " + problem, action: nil, keyEquivalent: "")
             problemItem.isEnabled = false
             menu.addItem(problemItem)
+        }
+        if model.settings.voiceProvider == .elevenLabs, let voiceProblem = model.voiceProblem {
+            let voiceItem = add(menu, "⚠︎ ElevenLabs fungerar inte, Buddy pratar med macOS-rösten…", #selector(showVoiceSettings))
+            voiceItem.toolTip = voiceProblem
         }
         menu.addItem(.separator())
 
@@ -197,6 +209,10 @@ final class StatusBarController: NSObject {
     @objc private func resetProgress() { model.resetProgress() }
     @objc private func showEditor() { windows.showEditor() }
     @objc private func showSettings() { windows.showSettings() }
+    @objc private func showVoiceSettings() {
+        model.settingsTab = .voice
+        windows.showSettings()
+    }
     @objc private func showControlPanel() { windows.showControlPanel() }
     @objc private func quit() { model.quit() }
 

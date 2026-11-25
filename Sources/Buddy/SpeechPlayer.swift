@@ -18,6 +18,8 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
     var onSubtitle: ((String?) -> Void)?
     var onMouth: ((Float) -> Void)?
     var onLog: ((String) -> Void)?
+    /// After each request to ElevenLabs: nil if it worked, otherwise why it did not.
+    var onElevenLabs: ((String?) -> Void)?
 
     let system: SystemVoice
     private(set) var config = VoiceConfig()
@@ -271,10 +273,12 @@ final class SpeechPlayer: NSObject, VoiceOutput, AVAudioPlayerDelegate {
             )
             let url = elevenLabsBase(sentence, model: model, config: config).appendingPathExtension(audio.fileExtension)
             try audio.data.write(to: url, options: .atomic)
+            onElevenLabs?(nil)
             return .success(.file(url))
         } catch {
             // Keep talking with the built-in voice if the network or the key fails on stage.
             onLog?("\(error.localizedDescription) – använder macOS-rösten")
+            onElevenLabs?(error.localizedDescription)
             fields["fallback"] = true
             fields["elevenLabsError"] = error.localizedDescription
             fields["provider"] = VoiceProvider.system.rawValue
