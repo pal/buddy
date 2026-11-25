@@ -35,6 +35,7 @@ import sys
 import threading
 import time
 import traceback
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -103,7 +104,7 @@ USE_CASES = {
     "UC20": "Startas Buddy från Hämtade filer flyttar den sig till Program som Buddy.app, ersätter den gamla och startar om därifrån",
     "UC21": "Finns en nyare Buddy i Program öppnas den i stället för den nedladdade kopian",
     "UC22": "En äldre Buddy uppdaterar sig själv från den riktiga releasen på GitHub, utan inloggning",
-    "UC23": "Kortkommandon fungerar i Buddys fönster: ⌘V klistrar in en API-nyckel och ⌘W stänger fönstret",
+    "UC23": "Kortkommandon fungerar i Buddys fönster med riktiga tangenttryck: ⌘A, ⌘C, ⌘X och ⌘V i textfälten, så att en API-nyckel kan klistras in, och ⌘W stänger fönstret",
     "UC24": "Med lyssnandet avstängt använder Buddy inte mikrofonen, ikonen i menyraden är överkryssad, och valet gäller även efter omstart",
 }
 SETTINGS_TABS = ["voice", "ai", "listening", "avatar", "shortcuts", "updates"]
@@ -1613,6 +1614,146 @@ def test_edit_shortcuts(ctx):
     check(result.get("keyRestored"), "the API key was not restored after the test")
     ctx.note("⌘V i API-nyckelfältet utan huvudmeny (som Buddy var före den här ändringen): %s; med huvudmenyn: klistrar in. ⌘W stänger fönstret." % (
         "klistrar ändå in" if result.get("pasteWithoutMainMenu") else "klistrar inte in"))
+
+
+# ---------------------------------------------------------------------------
+# Real mouse clicks and key presses, as a person uses Buddy's windows
+
+
+def probe(ctx, *args, timeout=30):
+    return run([str(ctx.tools["Probe"])] + [str(a) for a in args], timeout=timeout)
+
+
+def real_click(ctx, x, y):
+    probe(ctx, "click", "%.1f" % x, "%.1f" % y)
+    time.sleep(0.8)
+
+
+def real_keys(ctx, *keys):
+    probe(ctx, "keys", *keys)
+    time.sleep(0.6)
+
+
+def real_typing(ctx, text):
+    probe(ctx, "type", text)
+    time.sleep(0.6)
+
+
+def set_pasteboard(text):
+    subprocess.run(["pbcopy"], input=text, text=True, check=True, timeout=10)
+
+
+def read_pasteboard():
+    return run(["pbpaste"], timeout=10).stdout
+
+
+def settings_fields(buddy):
+    since = buddy.mark()
+    buddy.command("settingsFields")
+    return buddy.wait_type("settingsFields", 10, since)
+
+
+def only_field(state, secure):
+    fields = [f for f in state.get("fields", []) if f.get("secure") == secure]
+    check(len(fields) == 1, "expected one %s text field in the %s pane, found %s" % (
+        "secure" if secure else "plain", state.get("tab"), state.get("fields")))
+    return fields[0]
+
+
+def click_field(ctx, field):
+    real_click(ctx, field["x"] + field["w"] / 2, field["y"] + field["h"] / 2)
+
+
+def open_settings_from_another_app(ctx, tab):
+    """As when the presenter opens Buddy's settings while their presentation is the active app."""
+    buddy = ctx.buddy
+    screen = ((buddy.last("launch") or {}).get("screens") or [{"w": 1920, "h": 1080}])[0]
+    real_click(ctx, screen["w"] * 0.25, screen["h"] * 0.4)  # on the slide
+    since = buddy.mark()
+    buddy.command("settings", tab)
+    buddy.wait_type("settingsShown", 10, since, tab=tab)
+    time.sleep(1.5)
+    return settings_fields(buddy)
+
+
+@test("T29", "Riktiga musklick och tangenttryck i inställningarna: ⌘A och ⌘V i API-nyckelfältet, skrivning, ⌘C, ⌘X och ⌘W",
+      ["UC23"], modes=("inject",))
+def test_real_keyboard_and_mouse(ctx):
+    buddy = ctx.buddy  # the ElevenLabs run from T15–T25
+    access = json.loads(probe(ctx, "access").stdout)
+
+    # The Claude API key: click the field, select all and paste, as a person does.
+    opened = open_settings_from_another_app(ctx, "ai")
+    screenshot(ctx.out / "settings-real-opened.png")
+    key_field = only_field(opened, secure=True)
+    original_key = "sk-ant-e2e-mock"
+    pasted = "sk-ant-e2e-real-%s" % uuid.uuid4().hex
+    set_pasteboard(pasted)
+    click_field(ctx, key_field)
+    clicked = settings_fields(buddy)
+    clicks = 1
+    if not only_field(clicked, secure=True).get("editing"):
+        # As in any Mac app, the first click on a window in the background may only bring it forward.
+        click_field(ctx, key_field)
+        clicked = settings_fields(buddy)
+        clicks = 2
+    real_keys(ctx, "cmd+a", "cmd+v")
+    after_paste = settings_fields(buddy)
+    screenshot(ctx.out / "settings-real-paste.png")
+    field = only_field(after_paste, secure=True)
+    check(after_paste.get("appActive") and after_paste.get("keyWindow"),
+          "Buddy's settings window did not take the keyboard after a click (may post events: %s): %s" % (access, after_paste))
+    check(field.get("editing"), "a click did not put the cursor in the API key field (may post events: %s): %s" % (access, field))
+    check(field.get("matchesPasteboard") and after_paste.get("anthropicKeyMatchesPasteboard"),
+          "⌘A ⌘V did not replace the API key with the copied one (field %d characters, copied %d)" % (
+              field.get("length", -1), len(pasted)))
+
+    # Typing goes into the field too.
+    real_typing(ctx, "xyz")
+    typed = only_field(settings_fields(buddy), secure=True)
+    check(typed.get("length") == len(pasted) + 3, "typing did not reach the API key field: %s" % typed)
+
+    # Put the test's key back the same way.
+    set_pasteboard(original_key)
+    real_keys(ctx, "cmd+a", "cmd+v")
+    restored = settings_fields(buddy)
+    check(restored.get("anthropicKeyMatchesPasteboard"), "the API key could not be pasted back: %s" % restored)
+
+    # A plain text field (the voice id): copy, cut and paste.
+    since = buddy.mark()
+    buddy.command("settings", "voice")
+    buddy.wait_type("settingsShown", 10, since, tab="voice")
+    time.sleep(1.5)
+    voice = settings_fields(buddy)
+    plain = only_field(voice, secure=False)
+    click_field(ctx, plain)
+    if not plain.get("value"):
+        real_typing(ctx, "e2evoiceid")
+        plain = only_field(settings_fields(buddy), secure=False)
+    value = plain.get("value")
+    check(value, "the voice id field is still empty after typing in it: %s" % plain)
+    set_pasteboard("something else")
+    real_keys(ctx, "cmd+a", "cmd+c")
+    check(read_pasteboard() == value, "⌘A ⌘C copied %r, not the field's %r" % (read_pasteboard(), value))
+    set_pasteboard("something else")
+    real_keys(ctx, "cmd+a", "cmd+x")
+    cut = settings_fields(buddy)
+    check(only_field(cut, secure=False).get("value") == "" and cut.get("voiceID") == "",
+          "⌘X did not empty the voice id field: %s" % only_field(cut, secure=False))
+    check(read_pasteboard() == value, "⌘X put %r on the pasteboard, not %r" % (read_pasteboard(), value))
+    real_keys(ctx, "cmd+v")
+    pasted_back = settings_fields(buddy)
+    check(only_field(pasted_back, secure=False).get("value") == value and pasted_back.get("voiceID") == value,
+          "⌘V did not paste the voice id back: %s" % only_field(pasted_back, secure=False))
+
+    # ⌘W closes the window.
+    real_keys(ctx, "cmd+w")
+    closed = settings_fields(buddy)
+    check(not closed.get("visible"), "⌘W did not close the settings window")
+    ctx.note("Med riktiga musklick och tangenttryck, med presentationen som aktiv app när fönstret öppnades "
+             "(Buddy aktiv direkt: %s; klick som behövdes i fältet: %d): ⌘A ⌘V klistrar in API-nyckeln, skrivning hamnar i fältet, "
+             "⌘C, ⌘X och ⌘V fungerar i röst-id-fältet och ⌘W stänger fönstret." % (
+                 "ja" if opened.get("appActive") else "nej", clicks))
 
 
 @test("T20", "Avslutas rent (ElevenLabs)", ["UC1"], modes=("inject",), quits=True)

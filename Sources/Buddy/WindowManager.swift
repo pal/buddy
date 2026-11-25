@@ -13,6 +13,7 @@ final class WindowManager {
         self.model = model
         model.showSettingsWindow = { [weak self] in self?.showSettings() }
         model.testEditShortcuts = { [weak self] in self?.settingsController().testEditShortcuts() }
+        model.reportSettingsFields = { [weak self] in self?.settings?.recordFields() }
     }
 
     func showEditor() {

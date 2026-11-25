@@ -83,6 +83,8 @@ final class AppModel: ObservableObject {
     var showSettingsWindow: (() -> Void)?
     /// End-to-end test of the editing shortcuts in the settings window (set by the window manager).
     var testEditShortcuts: (() -> Void)?
+    /// End-to-end tests: where the settings window's text fields are and what they hold.
+    var reportSettingsFields: (() -> Void)?
     let updater: Updater
     /// Last time Buddy heard, said or was asked to do something (updates wait for a quiet spell).
     private(set) var lastActivityAt = Date()
@@ -640,6 +642,8 @@ final class AppModel: ObservableObject {
             voicePickerOpen = true
         case "editShortcuts":
             testEditShortcuts?()
+        case "settingsFields":
+            reportSettingsFields?()
         case "voiceProvider":
             if let provider = command.value.flatMap(VoiceProvider.init(rawValue:)) {
                 settings.voiceProvider = provider

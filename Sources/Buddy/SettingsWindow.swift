@@ -126,6 +126,57 @@ final class SettingsWindowController: NSWindowController {
         return nil
     }
 
+    /// For the end-to-end tests: where the text fields of the shown pane are on the screen and
+    /// what they hold, so a test can click and type in them as a person does. A secure field
+    /// only reports its length and whether it matches the pasteboard, never its contents.
+    func recordFields() {
+        guard EventLog.shared.isEnabled, let window else { return }
+        let primary = NSScreen.screens.first?.frame ?? .zero
+        let pasteboard = NSPasteboard.general.string(forType: .string)
+        let fields = SettingsWindowController.textFields(in: window.contentView).map { field -> [String: Any] in
+            let rect = window.convertToScreen(field.convert(field.bounds, to: nil))
+            let text = field.stringValue
+            var entry: [String: Any] = [
+                "secure": field is NSSecureTextField,
+                "placeholder": field.placeholderString ?? "",
+                // Points with the origin at the top left of the main screen, like mouse events.
+                "x": Double(rect.minX), "y": Double(primary.maxY - rect.maxY),
+                "w": Double(rect.width), "h": Double(rect.height),
+                "length": text.count,
+                "editing": field.currentEditor() != nil,
+                "matchesPasteboard": pasteboard.map { text == $0 } ?? false,
+            ]
+            if !(field is NSSecureTextField) {
+                entry["value"] = text
+            }
+            return entry
+        }
+        let settings = model.settings
+        EventLog.shared.record("settingsFields", [
+            "tab": panes.selectedTab?.rawValue ?? "",
+            "visible": window.isVisible,
+            "appActive": NSApp.isActive,
+            "keyWindow": window.isKeyWindow,
+            "fields": fields,
+            "pasteboardLength": pasteboard?.count ?? -1,
+            "anthropicKeyLength": settings.anthropicKey.count,
+            "anthropicKeyMatchesPasteboard": pasteboard.map { settings.anthropicKey == $0 } ?? false,
+            "voiceID": settings.elevenLabsVoiceID,
+        ])
+    }
+
+    private static func textFields(in view: NSView?) -> [NSTextField] {
+        guard let view, !view.isHiddenOrHasHiddenAncestor else { return [] }
+        var found: [NSTextField] = []
+        if let field = view as? NSTextField, field.isEditable {
+            found.append(field)
+        }
+        for subview in view.subviews {
+            found += textFields(in: subview)
+        }
+        return found
+    }
+
     private func record() {
         guard EventLog.shared.isEnabled, let window else { return }
         let content = window.contentView?.frame.size ?? .zero
